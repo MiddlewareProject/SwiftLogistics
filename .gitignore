@@ -1,0 +1,101 @@
+############################
+# Logs
+############################
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+############################
+# Environment
+############################
+.env
+.env.*
+!.env.example
+
+############################
+# Node / React
+############################
+node_modules/
+dist/
+dist-ssr/
+coverage/
+*.local
+*.tsbuildinfo
+
+############################
+# Spring Boot / Maven / Gradle
+############################
+HELP.md
+target/
+build/
+.gradle/
+
+!**/src/main/**/target/
+!**/src/test/**/target/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+############################
+# Maven Wrapper
+############################
+# Ignore only if your team already has Maven installed.
+# Otherwise, REMOVE this line and commit the wrapper.
+# .mvn/wrapper/maven-wrapper.jar
+
+############################
+# STS
+############################
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings/
+.springBeans
+.sts4-cache
+
+############################
+# IntelliJ
+############################
+.idea/
+*.iws
+*.iml
+*.ipr
+
+############################
+# NetBeans
+############################
+/nbproject/private/
+/nbbuild/
+/nbdist/
+/.nb-gradle/
+
+############################
+# VS Code
+############################
+.vscode/*
+!.vscode/extensions.json
+
+############################
+# Docker / Kubernetes
+############################
+*.tar
+*.secret.yaml
+*.kubeconfig
+
+############################
+# Terraform (optional later)
+############################
+.terraform/
+*.tfstate
+*.tfstate.*
+
+############################
+# OS
+############################
+.DS_Store
+Thumbs.db
+desktop.ini
