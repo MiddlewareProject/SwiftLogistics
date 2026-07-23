@@ -2,15 +2,12 @@ FROM maven:3.9-eclipse-temurin-21-alpine AS build
 
 WORKDIR /app
 
-COPY .mvn .mvn
-COPY mvnw .
 COPY pom.xml .
-
-RUN ./mvnw dependency:go-offline
+RUN mvn dependency:go-offline
 
 COPY src src
 
-RUN ./mvnw -B -DskipTests clean package
+RUN mvn -B -DskipTests clean package
 
 FROM eclipse-temurin:21-jre-alpine
 
