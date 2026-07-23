@@ -1,0 +1,133 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: swiftlogistics
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - swiftlogistics-network
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - swiftlogistics-network
+
+  gateway:
+    build:
+      context: ./gateway
+    container_name: gateway
+    env_file:
+      - .env
+    depends_on:
+      - order-service
+      - tracking-service
+      - notification-service
+      - cms-adapter
+      - ros-adapter
+      - wms-adapter
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - swiftlogistics-network
+
+  order-service:
+    build:
+      context: ./order-service
+    container_name: order-service
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - rabbitmq
+    restart: unless-stopped
+    networks:
+      - swiftlogistics-network
+
+  tracking-service:
+    build:
+      context: ./tracking-service
+    container_name: tracking-service
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - rabbitmq
+    restart: unless-stopped
+    networks:
+      - swiftlogistics-network
+
+  notification-service:
+    build:
+      context: ./notification-service
+    container_name: notification-service
+    env_file:
+      - .env
+    depends_on:
+      - rabbitmq
+    restart: unless-stopped
+    networks:
+      - swiftlogistics-network
+
+  cms-adapter:
+    build:
+      context: ./CMS_Adapter
+    container_name: cms-adapter
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - swiftlogistics-network
+
+  ros-adapter:
+    build:
+      context: ./ROS_Adapter
+    container_name: ros-adapter
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - swiftlogistics-network
+
+  wms-adapter:
+    build:
+      context: ./WMS_Adapter
+    container_name: wms-adapter
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - swiftlogistics-network
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: frontend
+    depends_on:
+      - gateway
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    networks:
+      - swiftlogistics-network
+
+volumes:
+  postgres-data:
+
+networks:
+  swiftlogistics-network:
+    driver: bridge
