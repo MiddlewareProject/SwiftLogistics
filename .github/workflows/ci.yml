@@ -26,9 +26,9 @@ jobs:
           - order-service
           - tracking-service
           - notification-service
-          - cms-adapter
-          - ros-adapter
-          - wms-adapter
+          - CMS_Adapter
+          - ROS_Adapter
+          - WMS_Adapter
 
     steps:
       - name: Checkout Repository
