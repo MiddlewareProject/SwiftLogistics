@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import './App.css';
 
 // SVG Icons Component Library
@@ -94,6 +94,96 @@ const SearchIcon = () => (
   </svg>
 );
 
+const INITIAL_ORDERS = [
+  {
+    id: 'ST-902148',
+    date: '2026-07-26',
+    pickupAddress: '142 Tech Parkway, Boston MA',
+    receiverName: 'Apex Distributors',
+    receiverPhone: '617-555-0182',
+    deliveryAddress: '890 Commerce Way, New York NY',
+    packageType: 'Pallet',
+    weight: 480.0,
+    priority: 'Express',
+    status: 'Out for Delivery',
+    driver: 'Marcus Vance',
+    vehicle: 'Volvo VNL Truck (TRK-982)',
+    notes: 'Fragile industrial components.',
+    history: [
+      { status: 'Pending', time: '08:30 AM' },
+      { status: 'Warehouse', time: '10:15 AM' },
+      { status: 'Route Generated', time: '11:00 AM' },
+      { status: 'Loaded', time: '01:45 PM' },
+      { status: 'Out for Delivery', time: '03:10 PM' }
+    ]
+  },
+  {
+    id: 'ST-881290',
+    date: '2026-07-25',
+    pickupAddress: '72 Logistics Blvd, Chicago IL',
+    receiverName: 'BioHealth Labs',
+    receiverPhone: '312-555-0144',
+    deliveryAddress: '55 Medical Plaza, Miami FL',
+    packageType: 'Parcel',
+    weight: 12.5,
+    priority: 'Overnight',
+    status: 'Delivered',
+    driver: 'Elena Rostova',
+    vehicle: 'Freightliner M2 (TRK-441)',
+    notes: 'Temperature-controlled medical supplies.',
+    history: [
+      { status: 'Pending', time: 'Jul 25, 09:00 AM' },
+      { status: 'Warehouse', time: 'Jul 25, 11:20 AM' },
+      { status: 'Route Generated', time: 'Jul 25, 12:40 PM' },
+      { status: 'Loaded', time: 'Jul 25, 03:00 PM' },
+      { status: 'Out for Delivery', time: 'Jul 25, 05:15 PM' },
+      { status: 'Delivered', time: 'Jul 25, 07:30 PM' }
+    ]
+  },
+  {
+    id: 'ST-719402',
+    date: '2026-07-24',
+    pickupAddress: '88 Ocean Port Dr, Seattle WA',
+    receiverName: 'Pacific Retailers',
+    receiverPhone: '206-555-0199',
+    deliveryAddress: '1205 Retail Row, Los Angeles CA',
+    packageType: 'Freight',
+    weight: 1250.0,
+    priority: 'Standard',
+    status: 'Warehouse',
+    driver: 'John Miller',
+    vehicle: 'Peterbilt 579 (TRK-208)',
+    notes: 'Bulk retail inventory.',
+    history: [
+      { status: 'Pending', time: 'Jul 24, 02:30 PM' },
+      { status: 'Warehouse', time: 'Jul 24, 05:15 PM' }
+    ]
+  },
+  {
+    id: 'ST-651029',
+    date: '2026-07-23',
+    pickupAddress: '411 Industrial Way, Dallas TX',
+    receiverName: 'Dynamic Machining',
+    receiverPhone: '214-555-0177',
+    deliveryAddress: '900 Factory Rd, Houston TX',
+    packageType: 'Document',
+    weight: 1.2,
+    priority: 'Standard',
+    status: 'Failed',
+    driver: 'David Kim',
+    vehicle: 'Ford Transit Van (VAN-115)',
+    notes: 'Legal contracts for signature.',
+    history: [
+      { status: 'Pending', time: 'Jul 23, 10:00 AM' },
+      { status: 'Warehouse', time: 'Jul 23, 11:30 AM' },
+      { status: 'Route Generated', time: 'Jul 23, 01:00 PM' },
+      { status: 'Loaded', time: 'Jul 23, 02:30 PM' },
+      { status: 'Out for Delivery', time: 'Jul 23, 04:00 PM' },
+      { status: 'Failed', time: 'Jul 23, 06:30 PM' }
+    ]
+  }
+];
+
 function App() {
   // Navigation Screens: 'landing', 'login', 'register', 'dashboard'
   const [currentScreen, setCurrentScreen] = useState('landing');
@@ -140,7 +230,6 @@ function App() {
 
   // Tracking search state
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
-  const [activeTrackingOrder, setActiveTrackingOrder] = useState(null);
 
   // Contact Form states
   const [contactName, setContactName] = useState('');
@@ -149,95 +238,10 @@ function App() {
   const [contactSuccess, setContactSuccess] = useState('');
 
   // Mock Database of Orders
-  const [orders, setOrders] = useState([
-    {
-      id: 'ST-902148',
-      date: '2026-07-26',
-      pickupAddress: '142 Tech Parkway, Boston MA',
-      receiverName: 'Apex Distributors',
-      receiverPhone: '617-555-0182',
-      deliveryAddress: '890 Commerce Way, New York NY',
-      packageType: 'Pallet',
-      weight: 480.0,
-      priority: 'Express',
-      status: 'Out for Delivery',
-      driver: 'Marcus Vance',
-      vehicle: 'Volvo VNL Truck (TRK-982)',
-      notes: 'Fragile industrial components.',
-      history: [
-        { status: 'Pending', time: '08:30 AM' },
-        { status: 'Warehouse', time: '10:15 AM' },
-        { status: 'Route Generated', time: '11:00 AM' },
-        { status: 'Loaded', time: '01:45 PM' },
-        { status: 'Out for Delivery', time: '03:10 PM' }
-      ]
-    },
-    {
-      id: 'ST-881290',
-      date: '2026-07-25',
-      pickupAddress: '72 Logistics Blvd, Chicago IL',
-      receiverName: 'BioHealth Labs',
-      receiverPhone: '312-555-0144',
-      deliveryAddress: '55 Medical Plaza, Miami FL',
-      packageType: 'Parcel',
-      weight: 12.5,
-      priority: 'Overnight',
-      status: 'Delivered',
-      driver: 'Elena Rostova',
-      vehicle: 'Freightliner M2 (TRK-441)',
-      notes: 'Temperature-controlled medical supplies.',
-      history: [
-        { status: 'Pending', time: 'Jul 25, 09:00 AM' },
-        { status: 'Warehouse', time: 'Jul 25, 11:20 AM' },
-        { status: 'Route Generated', time: 'Jul 25, 12:40 PM' },
-        { status: 'Loaded', time: 'Jul 25, 03:00 PM' },
-        { status: 'Out for Delivery', time: 'Jul 25, 05:15 PM' },
-        { status: 'Delivered', time: 'Jul 25, 07:30 PM' }
-      ]
-    },
-    {
-      id: 'ST-719402',
-      date: '2026-07-24',
-      pickupAddress: '88 Ocean Port Dr, Seattle WA',
-      receiverName: 'Pacific Retailers',
-      receiverPhone: '206-555-0199',
-      deliveryAddress: '1205 Retail Row, Los Angeles CA',
-      packageType: 'Freight',
-      weight: 1250.0,
-      priority: 'Standard',
-      status: 'Warehouse',
-      driver: 'John Miller',
-      vehicle: 'Peterbilt 579 (TRK-208)',
-      notes: 'Bulk retail inventory.',
-      history: [
-        { status: 'Pending', time: 'Jul 24, 02:30 PM' },
-        { status: 'Warehouse', time: 'Jul 24, 05:15 PM' }
-      ]
-    },
-    {
-      id: 'ST-651029',
-      date: '2026-07-23',
-      pickupAddress: '411 Industrial Way, Dallas TX',
-      receiverName: 'Dynamic Machining',
-      receiverPhone: '214-555-0177',
-      deliveryAddress: '900 Factory Rd, Houston TX',
-      packageType: 'Document',
-      weight: 1.2,
-      priority: 'Standard',
-      status: 'Failed',
-      driver: 'David Kim',
-      vehicle: 'Ford Transit Van (VAN-115)',
-      notes: 'Legal contracts for signature.',
-      history: [
-        { status: 'Pending', time: 'Jul 23, 10:00 AM' },
-        { status: 'Warehouse', time: 'Jul 23, 11:30 AM' },
-        { status: 'Route Generated', time: 'Jul 23, 01:00 PM' },
-        { status: 'Loaded', time: 'Jul 23, 02:30 PM' },
-        { status: 'Out for Delivery', time: 'Jul 23, 04:00 PM' },
-        { status: 'Failed', time: 'Jul 23, 06:30 PM' }
-      ]
-    }
-  ]);
+  const [orders, setOrders] = useState(INITIAL_ORDERS);
+
+  // Tracking details active order state
+  const [activeTrackingOrder, setActiveTrackingOrder] = useState(INITIAL_ORDERS[0]);
 
   // Notifications state
   const [notifications, setNotifications] = useState([
@@ -246,13 +250,6 @@ function App() {
     { id: 3, title: 'Package Received', desc: 'Warehouse Hub A received package for ST-719402.', time: 'Yesterday', type: 'wms', unread: false },
     { id: 4, title: 'Delivery Completed', desc: 'Order ST-881290 has been successfully delivered to Miami.', time: '2 days ago', type: 'delivery', unread: false }
   ]);
-
-  // Initialize tracking with the first order
-  useEffect(() => {
-    if (orders.length > 0 && !activeTrackingOrder) {
-      setActiveTrackingOrder(orders[0]);
-    }
-  }, [orders, activeTrackingOrder]);
 
   // Count unread notifications
   const unreadCount = notifications.filter(n => n.unread).length;
