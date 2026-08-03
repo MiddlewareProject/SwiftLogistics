@@ -1,46 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import './App.css';
-
-const API_BASE = 'http://localhost:8080';
-const AUTH_USER_STORAGE_KEY = 'swifttrack-auth-user';
-const REGISTERED_ACCOUNTS_STORAGE_KEY = 'swifttrack-registered-accounts';
-const DASHBOARD_SCREEN_STORAGE_KEY = 'swifttrack-current-screen';
-const DASHBOARD_TAB_STORAGE_KEY = 'swifttrack-dashboard-tab';
-
-const readStoredValue = (key, fallback) => {
-  if (typeof window === 'undefined') {
-    return fallback;
-  }
-
-  const value = window.localStorage.getItem(key);
-  if (!value) {
-    return fallback;
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
-};
-
-const writeStoredValue = (key, value) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(key, JSON.stringify(value));
-};
-
-const seedRegisteredAccounts = [
-  {
-    name: 'Sarah Jenkins',
-    email: 'sarah.jenkins@acmecorp.com',
-    password: 'password123',
-    company: 'Acme Industries Ltd',
-    role: 'Client Portal Manager'
-  }
-];
 
 // SVG Icons Component Library
 const LogoIcon = () => (
@@ -79,15 +38,6 @@ const TrackingIcon = () => (
   <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z" />
     <circle cx="12" cy="10" r="3" />
-  </svg>
-);
-
-const CmsIcon = () => (
-  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="3" y="4" width="18" height="14" rx="2" />
-    <path d="M7 20h10" />
-    <path d="M9 8h6" />
-    <path d="M9 12h6" />
   </svg>
 );
 
@@ -144,71 +94,121 @@ const SearchIcon = () => (
   </svg>
 );
 
-const toDisplayStatus = (status) => {
-  if (!status) return 'Pending';
-  return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
-};
-
-const getStoredUser = () => {
-  const storedUser = readStoredValue(AUTH_USER_STORAGE_KEY, null);
-  return storedUser && storedUser.token ? storedUser : null;
-};
-
-const mapBackendOrder = (order) => {
-  const displayStatus = toDisplayStatus(order.status);
-  const time = order.createdAt
-    ? new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : '';
-
-  return {
-    id: order.orderNumber,
-    date: (order.createdAt || '').split('T')[0],
-    pickupAddress: order.senderAddress,
-    receiverName: order.receiverName || 'Unknown',
-    receiverPhone: order.receiverPhone || 'Unknown',
-    deliveryAddress: order.recipientAddress,
-    packageType: order.packageType || 'Parcel',
-    weight: order.weight,
-    priority: order.priority || 'Standard',
-    status: displayStatus,
-    driver: 'Unassigned',
-    vehicle: 'TBD',
-    notes: order.deliveryNotes || 'None',
-    history: [{ status: displayStatus, time }]
-  };
-};
+const INITIAL_ORDERS = [
+  {
+    id: 'ST-902148',
+    date: '2026-07-26',
+    pickupAddress: '142 Tech Parkway, Boston MA',
+    receiverName: 'Apex Distributors',
+    receiverPhone: '617-555-0182',
+    deliveryAddress: '890 Commerce Way, New York NY',
+    packageType: 'Pallet',
+    weight: 480.0,
+    priority: 'Express',
+    status: 'Out for Delivery',
+    driver: 'Marcus Vance',
+    vehicle: 'Volvo VNL Truck (TRK-982)',
+    notes: 'Fragile industrial components.',
+    history: [
+      { status: 'Pending', time: '08:30 AM' },
+      { status: 'Warehouse', time: '10:15 AM' },
+      { status: 'Route Generated', time: '11:00 AM' },
+      { status: 'Loaded', time: '01:45 PM' },
+      { status: 'Out for Delivery', time: '03:10 PM' }
+    ]
+  },
+  {
+    id: 'ST-881290',
+    date: '2026-07-25',
+    pickupAddress: '72 Logistics Blvd, Chicago IL',
+    receiverName: 'BioHealth Labs',
+    receiverPhone: '312-555-0144',
+    deliveryAddress: '55 Medical Plaza, Miami FL',
+    packageType: 'Parcel',
+    weight: 12.5,
+    priority: 'Overnight',
+    status: 'Delivered',
+    driver: 'Elena Rostova',
+    vehicle: 'Freightliner M2 (TRK-441)',
+    notes: 'Temperature-controlled medical supplies.',
+    history: [
+      { status: 'Pending', time: 'Jul 25, 09:00 AM' },
+      { status: 'Warehouse', time: 'Jul 25, 11:20 AM' },
+      { status: 'Route Generated', time: 'Jul 25, 12:40 PM' },
+      { status: 'Loaded', time: 'Jul 25, 03:00 PM' },
+      { status: 'Out for Delivery', time: 'Jul 25, 05:15 PM' },
+      { status: 'Delivered', time: 'Jul 25, 07:30 PM' }
+    ]
+  },
+  {
+    id: 'ST-719402',
+    date: '2026-07-24',
+    pickupAddress: '88 Ocean Port Dr, Seattle WA',
+    receiverName: 'Pacific Retailers',
+    receiverPhone: '206-555-0199',
+    deliveryAddress: '1205 Retail Row, Los Angeles CA',
+    packageType: 'Freight',
+    weight: 1250.0,
+    priority: 'Standard',
+    status: 'Warehouse',
+    driver: 'John Miller',
+    vehicle: 'Peterbilt 579 (TRK-208)',
+    notes: 'Bulk retail inventory.',
+    history: [
+      { status: 'Pending', time: 'Jul 24, 02:30 PM' },
+      { status: 'Warehouse', time: 'Jul 24, 05:15 PM' }
+    ]
+  },
+  {
+    id: 'ST-651029',
+    date: '2026-07-23',
+    pickupAddress: '411 Industrial Way, Dallas TX',
+    receiverName: 'Dynamic Machining',
+    receiverPhone: '214-555-0177',
+    deliveryAddress: '900 Factory Rd, Houston TX',
+    packageType: 'Document',
+    weight: 1.2,
+    priority: 'Standard',
+    status: 'Failed',
+    driver: 'David Kim',
+    vehicle: 'Ford Transit Van (VAN-115)',
+    notes: 'Legal contracts for signature.',
+    history: [
+      { status: 'Pending', time: 'Jul 23, 10:00 AM' },
+      { status: 'Warehouse', time: 'Jul 23, 11:30 AM' },
+      { status: 'Route Generated', time: 'Jul 23, 01:00 PM' },
+      { status: 'Loaded', time: 'Jul 23, 02:30 PM' },
+      { status: 'Out for Delivery', time: 'Jul 23, 04:00 PM' },
+      { status: 'Failed', time: 'Jul 23, 06:30 PM' }
+    ]
+  }
+];
 
 function App() {
   // Navigation Screens: 'landing', 'login', 'register', 'dashboard'
-  const [currentScreen, setCurrentScreen] = useState(() => {
-    const storedUser = getStoredUser();
-    const storedScreen = readStoredValue(DASHBOARD_SCREEN_STORAGE_KEY, 'landing');
-    if (!storedUser && storedScreen === 'dashboard') {
-      return 'landing';
-    }
-
-    return storedScreen;
-  });
-
-  // Dashboard Sub-tabs: 'overview', 'create', 'history', 'tracking', 'cms', 'notifications', 'profile'
-  const [dashboardTab, setDashboardTab] = useState(() => readStoredValue(DASHBOARD_TAB_STORAGE_KEY, 'overview'));
+  const [currentScreen, setCurrentScreen] = useState('landing');
+  
+  // Dashboard Sub-tabs: 'overview', 'create', 'history', 'tracking', 'notifications', 'profile'
+  const [dashboardTab, setDashboardTab] = useState('overview');
 
   // Authenticated user state
-  const [user, setUser] = useState(() => getStoredUser());
+  const [user, setUser] = useState({
+    name: 'Sarah Jenkins',
+    email: 'sarah.jenkins@acmecorp.com',
+    company: 'Acme Industries Ltd',
+    role: 'Client Portal Manager'
+  });
 
   // Login form states
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [loginSubmitting, setLoginSubmitting] = useState(false);
 
   // Register form states
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regCompany, setRegCompany] = useState('');
-  const [registerError, setRegisterError] = useState('');
-  const [registerSubmitting, setRegisterSubmitting] = useState(false);
 
   // Order submission form states
   const [pickupAddress, setPickupAddress] = useState('');
@@ -222,8 +222,6 @@ function App() {
   
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [latestSubmittedId, setLatestSubmittedId] = useState('');
-  const [orderSubmitting, setOrderSubmitting] = useState(false);
-  const [orderSubmitError, setOrderSubmitError] = useState('');
 
   // Search, Filter and Sorting states for Order History
   const [searchTerm, setSearchTerm] = useState('');
@@ -239,11 +237,11 @@ function App() {
   const [contactMessage, setContactMessage] = useState('');
   const [contactSuccess, setContactSuccess] = useState('');
 
-  // Orders loaded from order-service for the signed-in client
-  const [orders, setOrders] = useState([]);
+  // Mock Database of Orders
+  const [orders, setOrders] = useState(INITIAL_ORDERS);
 
   // Tracking details active order state
-  const [activeTrackingOrder, setActiveTrackingOrder] = useState(null);
+  const [activeTrackingOrder, setActiveTrackingOrder] = useState(INITIAL_ORDERS[0]);
 
   // Notifications state
   const [notifications, setNotifications] = useState([
@@ -252,373 +250,98 @@ function App() {
     { id: 3, title: 'Package Received', desc: 'Warehouse Hub A received package for ST-719402.', time: 'Yesterday', type: 'wms', unread: false },
     { id: 4, title: 'Delivery Completed', desc: 'Order ST-881290 has been successfully delivered to Miami.', time: '2 days ago', type: 'delivery', unread: false }
   ]);
-  const [cmsDashboard, setCmsDashboard] = useState(null);
-  const [cmsLatestResult, setCmsLatestResult] = useState(null);
-  const [cmsLoading, setCmsLoading] = useState(false);
-  const [cmsError, setCmsError] = useState('');
-  const [retryingOrderNumber, setRetryingOrderNumber] = useState(null);
-  const [cmsRetryError, setCmsRetryError] = useState('');
-
-  useEffect(() => {
-    writeStoredValue(DASHBOARD_SCREEN_STORAGE_KEY, currentScreen);
-  }, [currentScreen]);
-
-  useEffect(() => {
-    writeStoredValue(DASHBOARD_TAB_STORAGE_KEY, dashboardTab);
-  }, [dashboardTab]);
-
-  useEffect(() => {
-    if (user) {
-      writeStoredValue(AUTH_USER_STORAGE_KEY, user);
-    } else if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(AUTH_USER_STORAGE_KEY);
-    }
-  }, [user]);
-
-  // Load the signed-in client's real orders from order-service whenever the session changes
-  useEffect(() => {
-    if (!user?.token) {
-      return;
-    }
-
-    let cancelled = false;
-
-    fetch(`${API_BASE}/api/orders/history`, {
-      headers: { Authorization: `Bearer ${user.token}` }
-    })
-      .then((response) => (response.ok ? response.json() : []))
-      .then((data) => {
-        if (cancelled) return;
-        const mapped = data.map(mapBackendOrder);
-        setOrders(mapped);
-        setActiveTrackingOrder(mapped[0] || null);
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const storedAccounts = readStoredValue(REGISTERED_ACCOUNTS_STORAGE_KEY, null);
-    if (!storedAccounts) {
-      writeStoredValue(REGISTERED_ACCOUNTS_STORAGE_KEY, seedRegisteredAccounts);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (dashboardTab !== 'cms') {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadCmsDashboard = async () => {
-      setCmsLoading(true);
-      setCmsError('');
-
-      try {
-        const dashboardResponse = await fetch('http://localhost:8083/api/cms/dashboard');
-        if (!dashboardResponse.ok) {
-          throw new Error(`CMS dashboard request failed with ${dashboardResponse.status}`);
-        }
-
-        const dashboardData = await dashboardResponse.json();
-        if (cancelled) {
-          return;
-        }
-
-        setCmsDashboard(dashboardData);
-
-        const latestResultResponse = await fetch('http://localhost:8083/api/cms/latest');
-        if (latestResultResponse.ok) {
-          const latestResultData = await latestResultResponse.json();
-          if (!cancelled) {
-            setCmsLatestResult(latestResultData);
-          }
-        } else if (!cancelled) {
-          setCmsLatestResult(null);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setCmsError(error.message || 'Unable to load CMS dashboard');
-          setCmsDashboard(null);
-          setCmsLatestResult(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setCmsLoading(false);
-        }
-      }
-    };
-
-    loadCmsDashboard();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [dashboardTab]);
-
-  // Re-fetches CMS dashboard data on demand (e.g. after a manual retry); not tied to any effect.
-  const refreshCmsDashboard = async () => {
-    try {
-      const dashboardResponse = await fetch('http://localhost:8083/api/cms/dashboard');
-      if (dashboardResponse.ok) {
-        setCmsDashboard(await dashboardResponse.json());
-      }
-
-      const latestResultResponse = await fetch('http://localhost:8083/api/cms/latest');
-      setCmsLatestResult(latestResultResponse.ok ? await latestResultResponse.json() : null);
-    } catch {
-      // Keep the previously loaded dashboard state if a background refresh fails.
-    }
-  };
-
-  const handleRetryOrder = async (orderNumber) => {
-    setRetryingOrderNumber(orderNumber);
-    setCmsRetryError('');
-
-    try {
-      const response = await fetch(`http://localhost:8083/api/cms/retries/${orderNumber}`, {
-        method: 'POST'
-      });
-
-      if (!response.ok) {
-        throw new Error(`Retry failed with status ${response.status}`);
-      }
-
-      await refreshCmsDashboard();
-    } catch (error) {
-      setCmsRetryError(error.message || `Unable to retry order ${orderNumber}`);
-    } finally {
-      setRetryingOrderNumber(null);
-    }
-  };
-
-  const cmsSummaryMetrics = cmsDashboard
-    ? [
-        { label: 'Total SOAP Requests', value: String(cmsDashboard.totalSoapRequests), tone: 'primary' },
-        { label: 'Successful Requests', value: String(cmsDashboard.successfulRequests), tone: 'completed' },
-        { label: 'Failed Requests', value: String(cmsDashboard.failedRequests), tone: 'failed' },
-        { label: 'Retry Queue', value: String(cmsDashboard.retryQueueSize), tone: 'pending' }
-      ]
-    : [];
-
-  const cmsEventLog = cmsDashboard?.recentEvents ?? [];
-  const cmsRetryQueue = cmsDashboard?.retryQueue ?? [];
-
-  const cmsSoapPreview = cmsLatestResult?.soapRequest || 'No CMS request captured yet.';
-  const cmsJsonPreview = cmsLatestResult?.responseJson || 'No CMS JSON response captured yet.';
-
-  const cmsRecentMessages = cmsDashboard?.recentEvents?.length
-    ? cmsDashboard.recentEvents.map((entry) => ({
-        title: entry.event,
-        detail: entry.details || entry.event
-      }))
-    : [];
-
-  const cmsConnected = cmsDashboard?.connected ?? false;
 
   // Count unread notifications
   const unreadCount = notifications.filter(n => n.unread).length;
 
   // Handle Login submission
-  const handleLoginSubmit = async (e) => {
+  const handleLoginSubmit = (e) => {
     e.preventDefault();
     if (!loginEmail.trim() || !loginPassword.trim()) {
       setLoginError('Please fill in all fields.');
       return;
     }
-
-    setLoginSubmitting(true);
+    // Simulate auth
+    setUser({
+      name: loginEmail.split('@')[0].replace('.', ' '),
+      email: loginEmail,
+      company: 'Logistics Partner Corp',
+      role: 'Client Manager'
+    });
     setLoginError('');
-
-    try {
-      const response = await fetch(`${API_BASE}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: loginEmail.trim(), password: loginPassword })
-      });
-
-      const bodyText = await response.text();
-      if (!response.ok) {
-        throw new Error(bodyText || 'Invalid email or password.');
-      }
-
-      const auth = JSON.parse(bodyText);
-      const registeredAccounts = readStoredValue(REGISTERED_ACCOUNTS_STORAGE_KEY, seedRegisteredAccounts);
-      const matchedAccount = registeredAccounts.find(
-        (account) => account.email.toLowerCase() === loginEmail.trim().toLowerCase()
-      );
-
-      setUser({
-        name: matchedAccount?.name || auth.username,
-        email: loginEmail.trim(),
-        company: matchedAccount?.company || '',
-        role: auth.role,
-        username: auth.username,
-        token: auth.token
-      });
-      setCurrentScreen('dashboard');
-      setDashboardTab('overview');
-    } catch (error) {
-      setLoginError(error.message || 'Unable to sign in. Please try again.');
-    } finally {
-      setLoginSubmitting(false);
-    }
+    setCurrentScreen('dashboard');
+    setDashboardTab('overview');
   };
 
   // Handle Register submission
-  const handleRegisterSubmit = async (e) => {
+  const handleRegisterSubmit = (e) => {
     e.preventDefault();
     if (!regName.trim() || !regEmail.trim() || !regPassword.trim() || !regCompany.trim()) {
-      setRegisterError('Please fill in all fields.');
       return;
     }
-
-    setRegisterSubmitting(true);
-    setRegisterError('');
-
-    try {
-      const response = await fetch(`${API_BASE}/api/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: regEmail.trim(),
-          email: regEmail.trim(),
-          password: regPassword
-        })
-      });
-
-      const bodyText = await response.text();
-      if (!response.ok) {
-        throw new Error(bodyText || 'Unable to create account.');
-      }
-
-      const auth = JSON.parse(bodyText);
-
-      const registeredAccounts = readStoredValue(REGISTERED_ACCOUNTS_STORAGE_KEY, seedRegisteredAccounts);
-      const newAccount = {
-        name: regName.trim(),
-        email: regEmail.trim(),
-        company: regCompany.trim()
-      };
-      writeStoredValue(REGISTERED_ACCOUNTS_STORAGE_KEY, [...registeredAccounts, newAccount]);
-
-      setUser({
-        name: newAccount.name,
-        email: newAccount.email,
-        company: newAccount.company,
-        role: auth.role,
-        username: auth.username,
-        token: auth.token
-      });
-      setCurrentScreen('dashboard');
-      setDashboardTab('overview');
-    } catch (error) {
-      setRegisterError(error.message || 'Unable to create account. Please try again.');
-    } finally {
-      setRegisterSubmitting(false);
-    }
+    setUser({
+      name: regName,
+      email: regEmail,
+      company: regCompany,
+      role: 'Client Manager'
+    });
+    setCurrentScreen('dashboard');
+    setDashboardTab('overview');
   };
 
   // Handle new order submission
-  const handleCreateOrderSubmit = async (e) => {
+  const handleCreateOrderSubmit = (e) => {
     e.preventDefault();
     if (!pickupAddress.trim() || !receiverName.trim() || !receiverPhone.trim() || !deliveryAddress.trim() || !weight) {
       alert('Please fill out all required fields.');
       return;
     }
 
-    if (!user?.token) {
-      setOrderSubmitError('Your session has expired. Please sign in again.');
-      return;
-    }
+    const newOrderId = `ST-${Math.floor(100000 + Math.random() * 900000)}`;
+    const newOrder = {
+      id: newOrderId,
+      date: new Date().toISOString().split('T')[0],
+      pickupAddress,
+      receiverName,
+      receiverPhone,
+      deliveryAddress,
+      packageType,
+      weight: parseFloat(weight),
+      priority,
+      status: 'Pending',
+      driver: 'Assigning...',
+      vehicle: 'TBD',
+      notes: deliveryNotes || 'None',
+      history: [
+        { status: 'Pending', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+      ]
+    };
 
-    setOrderSubmitting(true);
-    setOrderSubmitError('');
+    // Update database
+    setOrders([newOrder, ...orders]);
+    setLatestSubmittedId(newOrderId);
+    setShowSuccessModal(true);
 
-    try {
-      const response = await fetch(`${API_BASE}/api/orders`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${user.token}`
-        },
-        body: JSON.stringify({
-          description: `${packageType} - ${priority} priority${deliveryNotes ? ` - ${deliveryNotes}` : ''}`,
-          senderAddress: pickupAddress,
-          recipientAddress: deliveryAddress,
-          weight: parseFloat(weight),
-          receiverName,
-          receiverPhone,
-          packageType,
-          priority,
-          deliveryNotes
-        })
-      });
+    // Add notification
+    const newNotification = {
+      id: Date.now(),
+      title: 'Order Submitted',
+      desc: `New order ${newOrderId} has been created and is pending validation.`,
+      time: 'Just now',
+      type: 'order',
+      unread: true
+    };
+    setNotifications([newNotification, ...notifications]);
 
-      const bodyText = await response.text();
-      if (!response.ok) {
-        throw new Error(bodyText || 'Unable to create order.');
-      }
-
-      const createdOrder = JSON.parse(bodyText);
-      const newOrderId = createdOrder.orderNumber;
-      const newOrder = {
-        id: newOrderId,
-        date: (createdOrder.createdAt || new Date().toISOString()).split('T')[0],
-        pickupAddress,
-        receiverName,
-        receiverPhone,
-        deliveryAddress,
-        packageType,
-        weight: parseFloat(weight),
-        priority,
-        status: 'Pending',
-        driver: 'Assigning...',
-        vehicle: 'TBD',
-        notes: deliveryNotes || 'None',
-        history: [
-          { status: 'Pending', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
-        ]
-      };
-
-      // Update database
-      setOrders([newOrder, ...orders]);
-      setLatestSubmittedId(newOrderId);
-      setShowSuccessModal(true);
-
-      // Add notification
-      const newNotification = {
-        id: Date.now(),
-        title: 'Order Submitted',
-        desc: `New order ${newOrderId} has been created and is pending validation.`,
-        time: 'Just now',
-        type: 'order',
-        unread: true
-      };
-      setNotifications([newNotification, ...notifications]);
-
-      // Reset Form
-      setPickupAddress('');
-      setReceiverName('');
-      setReceiverPhone('');
-      setDeliveryAddress('');
-      setPackageType('Parcel');
-      setWeight('');
-      setPriority('Standard');
-      setDeliveryNotes('');
-    } catch (error) {
-      setOrderSubmitError(error.message || 'Unable to create order. Please try again.');
-    } finally {
-      setOrderSubmitting(false);
-    }
+    // Reset Form
+    setPickupAddress('');
+    setReceiverName('');
+    setReceiverPhone('');
+    setDeliveryAddress('');
+    setPackageType('Parcel');
+    setWeight('');
+    setPriority('Standard');
+    setDeliveryNotes('');
   };
 
   // Handle search tracking number
@@ -1062,8 +785,8 @@ function App() {
                 </label>
                 <a href="#" className="auth-forgot" onClick={() => alert('Password reset link sent to email.')}>Forgot password?</a>
               </div>
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px' }} disabled={loginSubmitting}>
-                {loginSubmitting ? 'Signing In...' : 'Sign In'}
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px' }}>
+                Sign In
               </button>
             </form>
 
@@ -1088,8 +811,6 @@ function App() {
               <h2>Create Account</h2>
               <p style={{ marginTop: '4px' }}>Register for portal order dispatch</p>
             </div>
-
-            {registerError && <div className="error-message" style={{ margin: '0 0 20px 0' }}>⚠️ {registerError}</div>}
 
             <form onSubmit={handleRegisterSubmit}>
               <div className="auth-form-group">
@@ -1140,8 +861,8 @@ function App() {
                   required 
                 />
               </div>
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px', marginTop: '8px' }} disabled={registerSubmitting}>
-                {registerSubmitting ? 'Creating Account...' : 'Register Account'}
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px', marginTop: '8px' }}>
+                Register Account
               </button>
             </form>
 
@@ -1204,15 +925,6 @@ function App() {
               </li>
               <li>
                 <div 
-                  className={`sidebar-item ${dashboardTab === 'cms' ? 'active' : ''}`}
-                  onClick={() => setDashboardTab('cms')}
-                >
-                  <CmsIcon />
-                  <span>CMS Integration</span>
-                </div>
-              </li>
-              <li>
-                <div 
                   className={`sidebar-item ${dashboardTab === 'notifications' ? 'active' : ''}`}
                   onClick={() => setDashboardTab('notifications')}
                 >
@@ -1247,10 +959,6 @@ function App() {
                 style={{ color: '#ef4444' }}
                 onClick={() => {
                   setCurrentScreen('landing');
-                  setDashboardTab('overview');
-                  setUser(null);
-                  setOrders([]);
-                  setActiveTrackingOrder(null);
                   setLoginEmail('');
                   setLoginPassword('');
                 }}
@@ -1433,7 +1141,6 @@ function App() {
                 </header>
 
                 <div className="card form-card">
-                  {orderSubmitError && <div className="error-message" style={{ margin: '0 0 20px 0' }}>⚠️ {orderSubmitError}</div>}
                   <form onSubmit={handleCreateOrderSubmit}>
                     <div className="order-form-grid">
                       <div className="order-form-group">
@@ -1547,8 +1254,8 @@ function App() {
                       <button type="button" className="btn btn-secondary" onClick={() => setDashboardTab('overview')}>
                         Cancel
                       </button>
-                      <button type="submit" className="btn btn-primary" disabled={orderSubmitting}>
-                        {orderSubmitting ? 'Submitting...' : 'Submit Order Payload'}
+                      <button type="submit" className="btn btn-primary">
+                        Submit Order Payload
                       </button>
                     </div>
                   </form>
@@ -1899,154 +1606,7 @@ function App() {
               </div>
             )}
 
-            {/* TAB 5: CMS INTEGRATION */}
-            {dashboardTab === 'cms' && (
-              <div>
-                <header className="screen-header">
-                  <div>
-                    <h1 className="screen-title">CMS Integration</h1>
-                    <p className="screen-subtitle">Monitor SOAP traffic, conversion previews, retries, and completion events for the legacy CMS bridge</p>
-                  </div>
-                </header>
-
-                <div className="cms-dashboard">
-                  {cmsLoading && <div className="card" style={{ marginBottom: '4px' }}>Loading CMS data...</div>}
-                  {cmsError && <div className="card" style={{ marginBottom: '4px', color: 'var(--status-failed)' }}>{cmsError}</div>}
-
-                  <div className="stats-grid cms-stats-grid">
-                    {cmsSummaryMetrics.map((metric) => (
-                      <div className="card stat-card cms-stat-card" key={metric.label}>
-                        <div className="stat-info">
-                          <h4>{metric.label}</h4>
-                          <p className="stat-val">{metric.value}</p>
-                        </div>
-                        <div className={`stat-icon-wrapper cms-stat-tone ${metric.tone}`}>
-                          <CmsIcon />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="cms-layout">
-                    <div className="cms-main-column">
-                      <div className="card cms-panel">
-                        <div className="cms-panel-header">
-                          <div>
-                            <h3>SOAP Request Viewer</h3>
-                            <p>Recent SOAP messages, XML request preview, JSON conversion preview, and response panel</p>
-                          </div>
-                          <span className={`badge ${cmsConnected ? 'badge-completed' : 'badge-failed'}`}>{cmsConnected ? 'Connected' : 'Disconnected'}</span>
-                        </div>
-
-                        <div className="cms-requests-list">
-                          {cmsRecentMessages.map((item) => (
-                            <div className="cms-request-row" key={item.title}>
-                              <div className="cms-request-bullet"></div>
-                              <div>
-                                <h4>{item.title}</h4>
-                                <p>{item.detail}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="cms-preview-grid">
-                          <div className="cms-preview-card">
-                            <div className="cms-preview-label">XML Request Preview</div>
-                            <pre>{cmsSoapPreview}</pre>
-                          </div>
-                          <div className="cms-preview-card">
-                            <div className="cms-preview-label">JSON Conversion Preview</div>
-                            <pre>{cmsJsonPreview}</pre>
-                          </div>
-                        </div>
-
-                        <div className="cms-response-panel">
-                          <div className="cms-preview-label">CMS Response Panel</div>
-                          <div className="cms-response-message">
-                            <strong>CMS Response</strong>
-                            <span>{cmsLatestResult?.message || 'CMS response will appear here after the first processed order.'}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="cms-side-column">
-                      <div className="card cms-status-card">
-                        <div className="cms-preview-label">Connection Status</div>
-                        <div className="cms-status-indicator">
-                          <span className={`cms-status-dot ${cmsConnected ? 'connected' : 'disconnected'}`}></span>
-                          <strong>{cmsConnected ? 'Connected' : 'Disconnected'}</strong>
-                        </div>
-                        <p>{cmsConnected ? 'SOAP endpoint is reachable and ready to process OrderCreated events.' : 'CMS backend is still starting or unreachable.'}</p>
-                      </div>
-
-                      <div className="card cms-events-card">
-                        <div className="cms-preview-label">Recent Event Log</div>
-                        <div className="cms-event-log">
-                          {cmsEventLog.map((entry) => (
-                            <div className="cms-event-row" key={`${entry.time}-${entry.event}`}>
-                              <span className="cms-event-time">{entry.time}</span>
-                              <span className="cms-event-name">{entry.event}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="card cms-retry-card">
-                        <div className="cms-panel-header compact">
-                          <div>
-                            <h3>Retry Queue</h3>
-                            <p>Failed SOAP calls awaiting retry</p>
-                          </div>
-                        </div>
-
-                        {cmsRetryError && <div className="error-message" style={{ margin: '0 0 12px 0' }}>⚠️ {cmsRetryError}</div>}
-
-                        <div className="cms-retry-table-wrap">
-                          <table className="cms-retry-table">
-                            <thead>
-                              <tr>
-                                <th>Order ID</th>
-                                <th>Error</th>
-                                <th>Attempts</th>
-                                <th>Action</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {cmsRetryQueue.length === 0 ? (
-                                <tr>
-                                  <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No failed SOAP calls awaiting retry.</td>
-                                </tr>
-                              ) : (
-                                cmsRetryQueue.map((row) => (
-                                  <tr key={row.orderNumber}>
-                                    <td>{row.orderNumber}</td>
-                                    <td>{row.errorMessage}</td>
-                                    <td>{row.attempts}</td>
-                                    <td>
-                                      <button
-                                        className="btn btn-secondary cms-retry-button"
-                                        onClick={() => handleRetryOrder(row.orderNumber)}
-                                        disabled={retryingOrderNumber === row.orderNumber}
-                                      >
-                                        {retryingOrderNumber === row.orderNumber ? 'Retrying...' : 'Retry'}
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 6: NOTIFICATIONS */}
+            {/* TAB 5: NOTIFICATIONS */}
             {dashboardTab === 'notifications' && (
               <div>
                 <header className="screen-header">
@@ -2091,7 +1651,7 @@ function App() {
               </div>
             )}
 
-            {/* TAB 7: PROFILE */}
+            {/* TAB 6: PROFILE */}
             {dashboardTab === 'profile' && (
               <div>
                 <header className="screen-header">
