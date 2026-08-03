@@ -33,17 +33,6 @@ public class Order {
     @Column(nullable = false)
     private Double weight;
 
-    private String receiverName;
-
-    private String receiverPhone;
-
-    private String packageType;
-
-    private String priority;
-
-    @Column(columnDefinition = "TEXT")
-    private String deliveryNotes;
-
     @Column(nullable = false)
     private String status; // PENDING, IN_TRANSIT, DELIVERED, etc.
 

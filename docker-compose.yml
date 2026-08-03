@@ -20,9 +20,6 @@ services:
     image: rabbitmq:4-management
     container_name: rabbitmq
     restart: unless-stopped
-    environment:
-      RABBITMQ_DEFAULT_USER: swift
-      RABBITMQ_DEFAULT_PASS: swift
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -92,10 +89,6 @@ services:
     container_name: cms-adapter
     env_file:
       - .env
-    depends_on:
-      - rabbitmq
-    ports:
-      - "8083:8083"
     restart: unless-stopped
     networks:
       - swiftlogistics-network
@@ -106,10 +99,6 @@ services:
     container_name: ros-adapter
     env_file:
       - .env
-    depends_on:
-      - rabbitmq
-    ports:
-      - "8084:8084"
     restart: unless-stopped
     networks:
       - swiftlogistics-network
