@@ -33,6 +33,11 @@ public class OrderService {
                 .senderAddress(request.getSenderAddress())
                 .recipientAddress(request.getRecipientAddress())
                 .weight(request.getWeight())
+                .receiverName(request.getReceiverName())
+                .receiverPhone(request.getReceiverPhone())
+                .packageType(request.getPackageType())
+                .priority(request.getPriority())
+                .deliveryNotes(request.getDeliveryNotes())
                 .status("PENDING")
                 .createdAt(LocalDateTime.now())
                 .build();
