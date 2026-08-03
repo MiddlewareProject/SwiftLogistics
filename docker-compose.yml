@@ -106,6 +106,10 @@ services:
     container_name: ros-adapter
     env_file:
       - .env
+    depends_on:
+      - rabbitmq
+    ports:
+      - "8084:8084"
     restart: unless-stopped
     networks:
       - swiftlogistics-network

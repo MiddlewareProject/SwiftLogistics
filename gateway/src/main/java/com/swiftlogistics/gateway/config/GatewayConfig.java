@@ -29,7 +29,13 @@ public class GatewayConfig {
         .before(uri(URI.create("http://cms-adapter:8083")))
         .build();
 
-    return orderRoutes.andOther(cmsRoutes);
+    RouterFunction<ServerResponse> rosRoutes = route("ros-adapter-route")
+        .route(RequestPredicates.path("/api/ros/**"), http())
+        .filter(jwtAuthenticationFilter)
+        .before(uri(URI.create("http://ros-adapter:8084")))
+        .build();
+
+    return orderRoutes.andOther(cmsRoutes).andOther(rosRoutes);
     }
 
     @Bean

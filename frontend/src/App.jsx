@@ -91,6 +91,14 @@ const CmsIcon = () => (
   </svg>
 );
 
+const RouteOptimizationIcon = () => (
+  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="6" cy="19" r="3" />
+    <circle cx="18" cy="5" r="3" />
+    <path d="M9 19h4.5a3.5 3.5 0 0 0 3.5-3.5v-7A3.5 3.5 0 0 1 20.5 5H21" />
+  </svg>
+);
+
 const BellIcon = () => (
   <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
     <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
@@ -258,6 +266,10 @@ function App() {
   const [cmsError, setCmsError] = useState('');
   const [retryingOrderNumber, setRetryingOrderNumber] = useState(null);
   const [cmsRetryError, setCmsRetryError] = useState('');
+  const [rosDashboard, setRosDashboard] = useState(null);
+  const [rosLatestRoute, setRosLatestRoute] = useState(null);
+  const [rosLoading, setRosLoading] = useState(false);
+  const [rosError, setRosError] = useState('');
 
   useEffect(() => {
     writeStoredValue(DASHBOARD_SCREEN_STORAGE_KEY, currentScreen);
@@ -399,6 +411,75 @@ function App() {
       setRetryingOrderNumber(null);
     }
   };
+
+  useEffect(() => {
+    if (dashboardTab !== 'routes') {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadRosDashboard = async () => {
+      setRosLoading(true);
+      setRosError('');
+
+      try {
+        const authHeaders = user?.token ? { Authorization: `Bearer ${user.token}` } : {};
+
+        const dashboardResponse = await fetch(`${API_BASE}/api/ros/dashboard`, { headers: authHeaders });
+        if (!dashboardResponse.ok) {
+          throw new Error(`ROS dashboard request failed with ${dashboardResponse.status}`);
+        }
+
+        const dashboardData = await dashboardResponse.json();
+        if (cancelled) {
+          return;
+        }
+
+        setRosDashboard(dashboardData);
+
+        const latestResponse = await fetch(`${API_BASE}/api/ros/latest`, { headers: authHeaders });
+        if (latestResponse.ok) {
+          const latestData = await latestResponse.json();
+          if (!cancelled) {
+            setRosLatestRoute(latestData);
+          }
+        } else if (!cancelled) {
+          setRosLatestRoute(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRosError(error.message || 'Unable to load Route Optimization dashboard');
+          setRosDashboard(null);
+          setRosLatestRoute(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setRosLoading(false);
+        }
+      }
+    };
+
+    loadRosDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, user]);
+
+  const rosSummaryMetrics = rosDashboard
+    ? [
+        { label: 'Routes Generated', value: String(rosDashboard.routesGenerated), tone: 'primary' },
+        { label: 'Vehicles', value: String(rosDashboard.vehicleCount), tone: 'completed' },
+        { label: 'Drivers', value: String(rosDashboard.driverCount), tone: 'completed' },
+        { label: 'Optimization Time', value: `${((rosDashboard.avgOptimizationTimeMs ?? 0) / 1000).toFixed(2)}s`, tone: 'pending' }
+      ]
+    : [];
+
+  const rosEventLog = rosDashboard?.recentEvents ?? [];
+  const rosRouteQueue = rosDashboard?.recentRoutes ?? [];
+  const rosVehicleStatus = rosDashboard?.vehicleStatus ?? [];
+  const rosConnected = rosDashboard?.connected ?? false;
 
   const cmsSummaryMetrics = cmsDashboard
     ? [
@@ -1212,7 +1293,16 @@ function App() {
                 </div>
               </li>
               <li>
-                <div 
+                <div
+                  className={`sidebar-item ${dashboardTab === 'routes' ? 'active' : ''}`}
+                  onClick={() => setDashboardTab('routes')}
+                >
+                  <RouteOptimizationIcon />
+                  <span>Route Optimization</span>
+                </div>
+              </li>
+              <li>
+                <div
                   className={`sidebar-item ${dashboardTab === 'notifications' ? 'active' : ''}`}
                   onClick={() => setDashboardTab('notifications')}
                 >
@@ -2033,6 +2123,200 @@ function App() {
                                         {retryingOrderNumber === row.orderNumber ? 'Retrying...' : 'Retry'}
                                       </button>
                                     </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: ROUTE OPTIMIZATION */}
+            {dashboardTab === 'routes' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">Route Optimization</h1>
+                    <p className="screen-subtitle">Live route generation, driver assignment, and vehicle status from the ROS bridge</p>
+                  </div>
+                </header>
+
+                <div className="cms-dashboard">
+                  {rosLoading && <div className="card" style={{ marginBottom: '4px' }}>Loading Route Optimization data...</div>}
+                  {rosError && <div className="card" style={{ marginBottom: '4px', color: 'var(--status-failed)' }}>{rosError}</div>}
+
+                  <div className="stats-grid cms-stats-grid">
+                    {rosSummaryMetrics.map((metric) => (
+                      <div className="card stat-card cms-stat-card" key={metric.label}>
+                        <div className="stat-info">
+                          <h4>{metric.label}</h4>
+                          <p className="stat-val">{metric.value}</p>
+                        </div>
+                        <div className={`stat-icon-wrapper cms-stat-tone ${metric.tone}`}>
+                          <RouteOptimizationIcon />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="cms-layout">
+                    <div className="cms-main-column">
+                      <div className="card cms-panel">
+                        <div className="cms-panel-header">
+                          <div>
+                            <h3>Optimized Route</h3>
+                            <p>Map visualization, delivery sequence, and driver assignment for the latest generated route</p>
+                          </div>
+                          <span className={`badge ${rosConnected ? 'badge-completed' : 'badge-failed'}`}>{rosConnected ? 'Connected' : 'Disconnected'}</span>
+                        </div>
+
+                        {rosLatestRoute ? (
+                          <>
+                            <div className="ros-route-path">
+                              <div className="ros-route-stop">
+                                <span className="ros-route-stop-label">{rosLatestRoute.pickupAddress}</span>
+                                <span className="ros-route-stop-dot"></span>
+                              </div>
+                              <div className="ros-route-line"></div>
+                              <div className="ros-route-stop">
+                                <span className="ros-route-stop-label">{rosLatestRoute.deliveryAddress}</span>
+                                <span className="ros-route-stop-dot"></span>
+                              </div>
+                            </div>
+
+                            <div className="cms-preview-grid">
+                              <div className="cms-preview-card">
+                                <div className="cms-preview-label">Delivery Sequence</div>
+                                <pre>{`1. Pickup — ${rosLatestRoute.pickupAddress}\n2. Deliver — ${rosLatestRoute.deliveryAddress}`}</pre>
+                              </div>
+                              <div className="cms-preview-card">
+                                <div className="cms-preview-label">Driver Assignment</div>
+                                <pre>{`Driver: ${rosLatestRoute.driverName}\nVehicle: ${rosLatestRoute.vehiclePlate} (${rosLatestRoute.vehicleType})`}</pre>
+                              </div>
+                            </div>
+
+                            <div className="cms-response-panel">
+                              <div className="cms-preview-label">Route Summary</div>
+                              <div className="cms-response-message">
+                                <strong>
+                                  Traffic:{' '}
+                                  <span className={`badge ${
+                                    rosLatestRoute.trafficLevel === 'LOW' ? 'badge-completed' :
+                                    rosLatestRoute.trafficLevel === 'HIGH' ? 'badge-failed' : 'badge-pending'
+                                  }`}>{rosLatestRoute.trafficLevel}</span>
+                                </strong>
+                                <span>
+                                  {rosLatestRoute.distanceKm} km · {rosLatestRoute.durationMinutes} min estimated ·
+                                  optimized in {rosLatestRoute.optimizationTimeMs} ms for order {rosLatestRoute.orderNumber}
+                                </span>
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="cms-response-panel">
+                            <div className="cms-preview-label">Route Summary</div>
+                            <div className="cms-response-message">
+                              <span>No route generated yet.</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="cms-side-column">
+                      <div className="card cms-status-card">
+                        <div className="cms-preview-label">Connection Status</div>
+                        <div className="cms-status-indicator">
+                          <span className={`cms-status-dot ${rosConnected ? 'connected' : 'disconnected'}`}></span>
+                          <strong>{rosConnected ? 'Connected' : 'Disconnected'}</strong>
+                        </div>
+                        <p>{rosConnected ? 'ROS endpoint is reachable and ready to optimize OrderCreated events.' : 'ROS backend is still starting or unreachable.'}</p>
+                      </div>
+
+                      <div className="card cms-events-card">
+                        <div className="cms-preview-label">Recent Route Generation Events</div>
+                        <div className="cms-event-log">
+                          {rosEventLog.map((entry) => (
+                            <div className="cms-event-row" key={`${entry.time}-${entry.event}`}>
+                              <span className="cms-event-time">{entry.time}</span>
+                              <span className="cms-event-name">{entry.event}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="card cms-retry-card">
+                        <div className="cms-panel-header compact">
+                          <div>
+                            <h3>Vehicle Status</h3>
+                            <p>Current fleet availability</p>
+                          </div>
+                        </div>
+
+                        <div className="cms-retry-table-wrap">
+                          <table className="cms-retry-table">
+                            <thead>
+                              <tr>
+                                <th>Vehicle</th>
+                                <th>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rosVehicleStatus.length === 0 ? (
+                                <tr>
+                                  <td colSpan={2} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No vehicle data yet.</td>
+                                </tr>
+                              ) : (
+                                rosVehicleStatus.map((vehicle) => (
+                                  <tr key={vehicle.vehicleId}>
+                                    <td>{vehicle.vehiclePlate}</td>
+                                    <td>
+                                      <span className={`badge ${
+                                        vehicle.status === 'IDLE' ? 'badge-pending' :
+                                        vehicle.status === 'MAINTENANCE' ? 'badge-failed' : 'badge-transit'
+                                      }`}>{vehicle.status}</span>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      <div className="card cms-retry-card">
+                        <div className="cms-panel-header compact">
+                          <div>
+                            <h3>RouteGenerated Queue</h3>
+                            <p>Most recently generated routes</p>
+                          </div>
+                        </div>
+
+                        <div className="cms-retry-table-wrap">
+                          <table className="cms-retry-table">
+                            <thead>
+                              <tr>
+                                <th>Order ID</th>
+                                <th>Driver</th>
+                                <th>Distance</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rosRouteQueue.length === 0 ? (
+                                <tr>
+                                  <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No routes generated yet.</td>
+                                </tr>
+                              ) : (
+                                rosRouteQueue.map((route) => (
+                                  <tr key={route.orderNumber}>
+                                    <td>{route.orderNumber}</td>
+                                    <td>{route.driverName}</td>
+                                    <td>{route.distanceKm} km</td>
                                   </tr>
                                 ))
                               )}
