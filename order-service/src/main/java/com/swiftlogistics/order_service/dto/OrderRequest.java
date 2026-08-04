@@ -17,4 +17,16 @@ public class OrderRequest {
     @NotNull(message = "Weight is required")
     @DecimalMin(value = "0.01", message = "Weight must be greater than 0")
     private Double weight;
+
+    @NotBlank(message = "Receiver name is required")
+    private String receiverName;
+
+    @NotBlank(message = "Receiver phone is required")
+    private String receiverPhone;
+
+    private String packageType;
+
+    private String priority;
+
+    private String deliveryNotes;
 }

@@ -15,13 +15,27 @@ import static org.springframework.cloud.gateway.server.mvc.handler.HandlerFuncti
 public class GatewayConfig {
 
     @Bean
-    public RouterFunction<ServerResponse> gatewayRoutes(JwtAuthenticationFilter jwtAuthenticationFilter) {
-        return route("order-service-route")
+        public RouterFunction<?> gatewayRoutes(JwtAuthenticationFilter jwtAuthenticationFilter) {
+    RouterFunction<ServerResponse> orderRoutes = route("order-service-route")
                 .route(RequestPredicates.path("/api/auth/**")
                         .or(RequestPredicates.path("/api/orders/**")), http())
                 .filter(jwtAuthenticationFilter)
                 .before(uri(URI.create("http://order-service:8081")))
-                .build();
+        .build();
+
+    RouterFunction<ServerResponse> cmsRoutes = route("cms-adapter-route")
+        .route(RequestPredicates.path("/api/cms/**"), http())
+        .filter(jwtAuthenticationFilter)
+        .before(uri(URI.create("http://cms-adapter:8083")))
+        .build();
+
+    RouterFunction<ServerResponse> rosRoutes = route("ros-adapter-route")
+        .route(RequestPredicates.path("/api/ros/**"), http())
+        .filter(jwtAuthenticationFilter)
+        .before(uri(URI.create("http://ros-adapter:8084")))
+        .build();
+
+    return orderRoutes.andOther(cmsRoutes).andOther(rosRoutes);
     }
 
     @Bean
