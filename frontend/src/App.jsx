@@ -199,7 +199,14 @@ function App() {
   });
 
   // Dashboard Sub-tabs: 'overview', 'create', 'history', 'tracking', 'cms', 'notifications', 'profile'
-  const [dashboardTab, setDashboardTab] = useState(() => readStoredValue(DASHBOARD_TAB_STORAGE_KEY, 'overview'));
+  const [dashboardTab, setDashboardTab] = useState(() => {
+    const storedTab = readStoredValue(DASHBOARD_TAB_STORAGE_KEY, 'overview');
+    const storedUser = getStoredUser();
+    if ((storedTab === 'cms' || storedTab === 'routes') && storedUser?.role !== 'ADMIN') {
+      return 'overview';
+    }
+    return storedTab;
+  });
 
   // Authenticated user state
   const [user, setUser] = useState(() => getStoredUser());
@@ -1283,24 +1290,28 @@ function App() {
                   <span>Live Tracking</span>
                 </div>
               </li>
-              <li>
-                <div 
-                  className={`sidebar-item ${dashboardTab === 'cms' ? 'active' : ''}`}
-                  onClick={() => setDashboardTab('cms')}
-                >
-                  <CmsIcon />
-                  <span>CMS Integration</span>
-                </div>
-              </li>
-              <li>
-                <div
-                  className={`sidebar-item ${dashboardTab === 'routes' ? 'active' : ''}`}
-                  onClick={() => setDashboardTab('routes')}
-                >
-                  <RouteOptimizationIcon />
-                  <span>Route Optimization</span>
-                </div>
-              </li>
+              {user.role === 'ADMIN' && (
+                <>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'cms' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('cms')}
+                    >
+                      <CmsIcon />
+                      <span>CMS Integration</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'routes' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('routes')}
+                    >
+                      <RouteOptimizationIcon />
+                      <span>Route Optimization</span>
+                    </div>
+                  </li>
+                </>
+              )}
               <li>
                 <div
                   className={`sidebar-item ${dashboardTab === 'notifications' ? 'active' : ''}`}
@@ -1989,8 +2000,8 @@ function App() {
               </div>
             )}
 
-            {/* TAB 5: CMS INTEGRATION */}
-            {dashboardTab === 'cms' && (
+            {/* TAB 5: CMS INTEGRATION (staff/admin only) */}
+            {user.role === 'ADMIN' && dashboardTab === 'cms' && (
               <div>
                 <header className="screen-header">
                   <div>
@@ -2137,7 +2148,8 @@ function App() {
             )}
 
             {/* TAB: ROUTE OPTIMIZATION */}
-            {dashboardTab === 'routes' && (
+            {/* TAB: ROUTE OPTIMIZATION (staff/admin only) */}
+            {user.role === 'ADMIN' && dashboardTab === 'routes' && (
               <div>
                 <header className="screen-header">
                   <div>
