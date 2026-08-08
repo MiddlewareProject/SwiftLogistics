@@ -20,6 +20,9 @@ public class RabbitMqConfig {
     public static final String PACKAGE_STORED_EXCHANGE = "package.stored.exchange";
     public static final String PACKAGE_STORED_ROUTING_KEY = "package.stored";
 
+    public static final String TRACKING_UPDATED_EXCHANGE = "tracking.updated.exchange";
+    public static final String TRACKING_UPDATED_ROUTING_KEY = "tracking.updated";
+
     @Bean
     public ObjectMapper objectMapper() {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -43,6 +46,11 @@ public class RabbitMqConfig {
             @Qualifier("packageStoredExchange") TopicExchange packageStoredExchange
     ) {
         return BindingBuilder.bind(packageStoredQueue).to(packageStoredExchange).with(PACKAGE_STORED_ROUTING_KEY);
+    }
+
+    @Bean
+    public TopicExchange trackingUpdatedExchange() {
+        return new TopicExchange(TRACKING_UPDATED_EXCHANGE);
     }
 
     @Bean
