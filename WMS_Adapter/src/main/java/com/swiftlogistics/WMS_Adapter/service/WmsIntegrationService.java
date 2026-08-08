@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class WmsIntegrationService {
     private final WmsProtocolTranslator wmsProtocolTranslator;
+    private final WmsTcpClient wmsTcpClient;
 
     @RabbitListener(queues = RabbitMqConfig.ORDER_CREATED_QUEUE)
     public void onOrderCreated(OrderCreatedEvent event) {
@@ -27,5 +28,8 @@ public class WmsIntegrationService {
 
         String storeMessage = wmsProtocolTranslator.toStoreMessage(event);
         log.info("Translated order {} to WMS protocol: {}", event.getOrderNumber(), storeMessage);
+
+        String response = wmsTcpClient.sendMessage(storeMessage);
+        log.info("WMS TCP response for order {}: {}", event.getOrderNumber(), response);
     }
 }
