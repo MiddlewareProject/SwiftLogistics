@@ -9,4 +9,6 @@ import java.util.List;
 @Repository
 public interface TrackingHistoryRepository extends JpaRepository<TrackingHistory, Long> {
     List<TrackingHistory> findByOrderNumberOrderByEventTimeAsc(String orderNumber);
+
+    List<TrackingHistory> findTop10ByOrderByEventTimeDesc();
 }

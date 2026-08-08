@@ -2,6 +2,7 @@ package com.swiftlogistics.tracking_service.controller;
 
 import com.swiftlogistics.tracking_service.dto.StatusUpdateRequest;
 import com.swiftlogistics.tracking_service.dto.TrackingResponse;
+import com.swiftlogistics.tracking_service.dto.WarehouseDashboardResponse;
 import com.swiftlogistics.tracking_service.exception.InvalidTrackingStatusException;
 import com.swiftlogistics.tracking_service.exception.TrackingNotFoundException;
 import com.swiftlogistics.tracking_service.service.TrackingService;
@@ -23,6 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class TrackingController {
     private final TrackingService trackingService;
+
+    @GetMapping("/dashboard")
+    public ResponseEntity<WarehouseDashboardResponse> getWarehouseDashboard() {
+        return ResponseEntity.ok(trackingService.getWarehouseDashboard());
+    }
 
     @GetMapping("/{orderNumber}")
     public ResponseEntity<TrackingResponse> getTracking(@PathVariable String orderNumber) {

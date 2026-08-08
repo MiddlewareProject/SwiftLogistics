@@ -157,6 +157,36 @@ const toDisplayStatus = (status) => {
   return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
 };
 
+const toWarehouseStatusLabel = (status) => {
+  const labels = {
+    WAREHOUSE: 'Warehouse',
+    LOADED: 'Loaded',
+    OUT_FOR_DELIVERY: 'Out for Delivery',
+    DELIVERED: 'Delivered',
+    FAILED: 'Failed',
+    PENDING: 'Pending'
+  };
+  return labels[status] || toDisplayStatus(status);
+};
+
+const getWarehouseStatusBadge = (status) => {
+  if (status === 'DELIVERED') return 'badge-completed';
+  if (status === 'FAILED') return 'badge-failed';
+  if (status === 'WAREHOUSE') return 'badge-pending';
+  return 'badge-transit';
+};
+
+const formatDateTime = (value) => {
+  if (!value) return 'Not available';
+  return new Date(value).toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
 const getStoredUser = () => {
   const storedUser = readStoredValue(AUTH_USER_STORAGE_KEY, null);
   return storedUser && storedUser.token ? storedUser : null;
@@ -277,6 +307,14 @@ function App() {
   const [rosLatestRoute, setRosLatestRoute] = useState(null);
   const [rosLoading, setRosLoading] = useState(false);
   const [rosError, setRosError] = useState('');
+  const [warehouseDashboard, setWarehouseDashboard] = useState(null);
+  const [warehouseLoading, setWarehouseLoading] = useState(false);
+  const [warehouseError, setWarehouseError] = useState('');
+  const [wmsStatus, setWmsStatus] = useState(null);
+  const [selectedWarehousePackage, setSelectedWarehousePackage] = useState(null);
+  const [selectedWarehouseTracking, setSelectedWarehouseTracking] = useState(null);
+  const [selectedWarehouseTrackingLoading, setSelectedWarehouseTrackingLoading] = useState(false);
+  const [selectedWarehouseTrackingError, setSelectedWarehouseTrackingError] = useState('');
 
   useEffect(() => {
     writeStoredValue(DASHBOARD_SCREEN_STORAGE_KEY, currentScreen);
@@ -474,6 +512,111 @@ function App() {
     };
   }, [dashboardTab, user]);
 
+  useEffect(() => {
+    if (dashboardTab !== 'warehouse' || !user?.token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadWarehouseDashboard = async () => {
+      setWarehouseLoading(true);
+      setWarehouseError('');
+
+      try {
+        const authHeaders = { Authorization: `Bearer ${user.token}` };
+        const [dashboardResponse, wmsStatusResponse] = await Promise.all([
+          fetch(`${API_BASE}/api/tracking/dashboard`, { headers: authHeaders }),
+          fetch(`${API_BASE}/api/wms/status`, { headers: authHeaders })
+        ]);
+
+        if (!dashboardResponse.ok) {
+          throw new Error(`Warehouse dashboard request failed with ${dashboardResponse.status}`);
+        }
+
+        const dashboardData = await dashboardResponse.json();
+        const statusData = wmsStatusResponse.ok
+          ? await wmsStatusResponse.json()
+          : { status: 'UNKNOWN' };
+
+        if (cancelled) {
+          return;
+        }
+
+        setWarehouseDashboard(dashboardData);
+        setWmsStatus(statusData);
+        setSelectedWarehousePackage((current) => {
+          const packages = dashboardData.packages || [];
+          if (!packages.length) {
+            return null;
+          }
+          return packages.find((item) => item.orderNumber === current?.orderNumber) || packages[0];
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setWarehouseError(error.message || 'Unable to load warehouse dashboard');
+          setWarehouseDashboard(null);
+          setWmsStatus({ status: 'UNKNOWN' });
+          setSelectedWarehousePackage(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setWarehouseLoading(false);
+        }
+      }
+    };
+
+    loadWarehouseDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, user]);
+
+  useEffect(() => {
+    if (dashboardTab !== 'warehouse' || !user?.token || !selectedWarehousePackage?.orderNumber) {
+      setSelectedWarehouseTracking(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadPackageTracking = async () => {
+      setSelectedWarehouseTrackingLoading(true);
+      setSelectedWarehouseTrackingError('');
+
+      try {
+        const response = await fetch(`${API_BASE}/api/tracking/${selectedWarehousePackage.orderNumber}`, {
+          headers: { Authorization: `Bearer ${user.token}` }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Tracking request failed with ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          setSelectedWarehouseTracking(data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSelectedWarehouseTracking(null);
+          setSelectedWarehouseTrackingError(error.message || 'Unable to load package tracking history');
+        }
+      } finally {
+        if (!cancelled) {
+          setSelectedWarehouseTrackingLoading(false);
+        }
+      }
+    };
+
+    loadPackageTracking();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, selectedWarehousePackage, user]);
+
   const rosSummaryMetrics = rosDashboard
     ? [
         { label: 'Routes Generated', value: String(rosDashboard.routesGenerated), tone: 'primary' },
@@ -511,6 +654,17 @@ function App() {
     : [];
 
   const cmsConnected = cmsDashboard?.connected ?? false;
+  const warehouseStats = warehouseDashboard?.stats || {};
+  const warehouseCapacity = warehouseDashboard?.capacity || {};
+  const warehousePackages = warehouseDashboard?.packages || [];
+  const warehouseRecentActivity = warehouseDashboard?.recentActivity || [];
+  const warehouseAvailableCapacity = Math.max(0, (warehouseCapacity.total ?? 0) - (warehouseCapacity.used ?? 0));
+  const wmsStatusValue = wmsStatus?.status || 'UNKNOWN';
+  const wmsStatusBadge = wmsStatusValue === 'ONLINE'
+    ? 'badge-completed'
+    : wmsStatusValue === 'OFFLINE'
+      ? 'badge-failed'
+      : 'badge-pending';
 
   // Count unread notifications
   const unreadCount = notifications.filter(n => n.unread).length;
@@ -1290,6 +1444,15 @@ function App() {
                   <span>Live Tracking</span>
                 </div>
               </li>
+              <li>
+                <div
+                  className={`sidebar-item ${dashboardTab === 'warehouse' ? 'active' : ''}`}
+                  onClick={() => setDashboardTab('warehouse')}
+                >
+                  <ShieldCheckIcon />
+                  <span>Warehouse</span>
+                </div>
+              </li>
               {user.role === 'ADMIN' && (
                 <>
                   <li>
@@ -1793,6 +1956,188 @@ function App() {
                         )}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* WAREHOUSE DASHBOARD */}
+            {dashboardTab === 'warehouse' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">Warehouse Dashboard</h1>
+                    <p className="screen-subtitle">Monitor stored packages, capacity, lifecycle activity, and WMS TCP availability</p>
+                  </div>
+                  <span className={`badge ${wmsStatusBadge}`}>
+                    WMS TCP {wmsStatusValue}
+                  </span>
+                </header>
+
+                <div className="warehouse-dashboard">
+                  {warehouseLoading && <div className="card" style={{ marginBottom: '4px' }}>Loading warehouse dashboard...</div>}
+                  {warehouseError && <div className="card" style={{ marginBottom: '4px', color: 'var(--status-failed)' }}>{warehouseError}</div>}
+
+                  <div className="stats-grid cms-stats-grid">
+                    {[
+                      { label: 'Packages Received', value: warehouseStats.received ?? 0, tone: 'primary' },
+                      { label: 'Packages Stored', value: warehouseStats.stored ?? 0, tone: 'pending' },
+                      { label: 'Packages Loaded', value: warehouseStats.loaded ?? 0, tone: 'primary' },
+                      { label: 'Packages Delivered', value: warehouseStats.delivered ?? 0, tone: 'completed' }
+                    ].map((metric) => (
+                      <div className="card stat-card cms-stat-card" key={metric.label}>
+                        <div className="stat-info">
+                          <h4>{metric.label}</h4>
+                          <p className="stat-val">{metric.value}</p>
+                        </div>
+                        <div className={`stat-icon-wrapper cms-stat-tone ${metric.tone}`}>
+                          <TruckIcon />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="warehouse-layout">
+                    <div className="warehouse-main-column">
+                      <div className="card cms-panel warehouse-package-panel">
+                        <div className="cms-panel-header">
+                          <div>
+                            <h3>Current Packages</h3>
+                            <p>Newest package state updates first</p>
+                          </div>
+                          <span className="badge badge-transit">{warehousePackages.length} records</span>
+                        </div>
+
+                        <div className="cms-retry-table-wrap">
+                          <table className="cms-retry-table warehouse-table">
+                            <thead>
+                              <tr>
+                                <th>Order Number</th>
+                                <th>Package ID</th>
+                                <th>Status</th>
+                                <th>Current Location</th>
+                                <th>Updated</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {warehousePackages.length === 0 ? (
+                                <tr>
+                                  <td colSpan="5" className="warehouse-empty-cell">
+                                    No packages are stored in tracking yet.
+                                  </td>
+                                </tr>
+                              ) : (
+                                warehousePackages.map((pkg) => (
+                                  <tr
+                                    key={pkg.orderNumber}
+                                    className={selectedWarehousePackage?.orderNumber === pkg.orderNumber ? 'warehouse-row selected' : 'warehouse-row'}
+                                    onClick={() => setSelectedWarehousePackage(pkg)}
+                                  >
+                                    <td className="order-id-cell">{pkg.orderNumber}</td>
+                                    <td>{pkg.packageId}</td>
+                                    <td>
+                                      <span className={`badge ${getWarehouseStatusBadge(pkg.status)}`}>
+                                        {toWarehouseStatusLabel(pkg.status)}
+                                      </span>
+                                    </td>
+                                    <td>{pkg.currentLocation || 'Not assigned'}</td>
+                                    <td>{formatDateTime(pkg.updatedAt)}</td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      <div className="card cms-panel">
+                        <div className="cms-panel-header compact">
+                          <div>
+                            <h3>Tracking Timeline</h3>
+                            <p>{selectedWarehousePackage ? selectedWarehousePackage.orderNumber : 'Select a package to inspect its real tracking history'}</p>
+                          </div>
+                        </div>
+
+                        {selectedWarehouseTrackingLoading ? (
+                          <div className="warehouse-empty-state">Loading tracking history...</div>
+                        ) : selectedWarehouseTrackingError ? (
+                          <div className="error-message">{selectedWarehouseTrackingError}</div>
+                        ) : selectedWarehouseTracking?.history?.length ? (
+                          <div className="warehouse-timeline">
+                            {selectedWarehouseTracking.history.map((item) => (
+                              <div className="warehouse-timeline-item" key={`${item.status}-${item.eventTime}`}>
+                                <span className={`warehouse-timeline-dot ${item.status === 'FAILED' ? 'failed' : ''}`}></span>
+                                <div>
+                                  <div className="warehouse-timeline-title">{toWarehouseStatusLabel(item.status)}</div>
+                                  <div className="warehouse-timeline-meta">{item.location || 'No location'} - {formatDateTime(item.eventTime)}</div>
+                                  <p>{item.description || 'No description provided'}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="warehouse-empty-state">Select a package to view its tracking timeline.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="warehouse-side-column">
+                      <div className="card cms-status-card">
+                        <div className="cms-preview-label">Storage Capacity</div>
+                        <div className="warehouse-capacity-value">
+                          {warehouseCapacity.used ?? 0} / {warehouseCapacity.total ?? 0}
+                        </div>
+                        <div className="warehouse-capacity-bar">
+                          <div
+                            className="warehouse-capacity-fill"
+                            style={{ width: `${Math.min(100, Math.max(0, warehouseCapacity.percentage ?? 0))}%` }}
+                          ></div>
+                        </div>
+                        <p>{warehouseAvailableCapacity} slots available. Capacity is based on packages currently in Warehouse status.</p>
+                      </div>
+
+                      <div className="card cms-status-card">
+                        <div className="cms-preview-label">WMS TCP Availability</div>
+                        <div className="cms-status-indicator">
+                          <span className={`cms-status-dot ${wmsStatusValue === 'ONLINE' ? 'connected' : 'disconnected'}`}></span>
+                          <strong>{wmsStatusValue}</strong>
+                        </div>
+                        <p>This reflects the last on-demand TCP request/response with the WMS endpoint, not a permanently open socket.</p>
+                        <div className="warehouse-status-details">
+                          <span>Endpoint</span>
+                          <strong>{wmsStatus?.host || 'unknown'}:{wmsStatus?.port || 'unknown'}</strong>
+                          <span>Last success</span>
+                          <strong>{formatDateTime(wmsStatus?.lastSuccessfulAt)}</strong>
+                          <span>Last failure</span>
+                          <strong>{formatDateTime(wmsStatus?.lastFailureAt)}</strong>
+                          {wmsStatus?.lastError && (
+                            <>
+                              <span>Error</span>
+                              <strong>{wmsStatus.lastError}</strong>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="card cms-events-card">
+                        <div className="cms-preview-label">Recent Activity</div>
+                        <div className="cms-event-log">
+                          {warehouseRecentActivity.length === 0 ? (
+                            <div className="warehouse-empty-state">No tracking activity yet.</div>
+                          ) : (
+                            warehouseRecentActivity.map((entry) => (
+                              <div className="cms-event-row warehouse-activity-row" key={`${entry.orderNumber}-${entry.eventTime}`}>
+                                <span className={`badge ${getWarehouseStatusBadge(entry.status)}`}>{toWarehouseStatusLabel(entry.status)}</span>
+                                <span className="cms-event-name">
+                                  <strong>{entry.packageId}</strong> for {entry.orderNumber}: {entry.description || 'Tracking updated'}
+                                  <small>{formatDateTime(entry.eventTime)}</small>
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

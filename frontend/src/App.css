@@ -1921,3 +1921,149 @@ body {
   font-weight: 600;
   color: var(--text-main);
 }
+
+/* --- WAREHOUSE DASHBOARD --- */
+.warehouse-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.warehouse-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.85fr);
+  gap: 24px;
+}
+
+@media (max-width: 1180px) {
+  .warehouse-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.warehouse-main-column,
+.warehouse-side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.warehouse-table .warehouse-row {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.warehouse-table .warehouse-row:hover,
+.warehouse-table .warehouse-row.selected {
+  background-color: var(--bg-inner);
+}
+
+.warehouse-empty-cell,
+.warehouse-empty-state {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+
+.warehouse-capacity-value {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-top: 10px;
+}
+
+.warehouse-capacity-bar {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background-color: var(--bg-inner);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-top: 14px;
+}
+
+.warehouse-capacity-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--status-completed));
+  transition: width 0.25s ease;
+}
+
+.warehouse-status-details {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.5fr) minmax(0, 1fr);
+  gap: 10px 14px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.warehouse-status-details span {
+  color: var(--text-muted);
+}
+
+.warehouse-status-details strong {
+  color: var(--text-main);
+  word-break: break-word;
+}
+
+.warehouse-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 4px;
+}
+
+.warehouse-timeline-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.warehouse-timeline-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: var(--primary);
+  margin-top: 5px;
+  box-shadow: 0 0 0 6px var(--primary-light);
+}
+
+.warehouse-timeline-dot.failed {
+  background-color: var(--status-failed);
+  box-shadow: 0 0 0 6px var(--status-failed-bg);
+}
+
+.warehouse-timeline-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.warehouse-timeline-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.warehouse-timeline-item p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 5px;
+}
+
+.warehouse-activity-row {
+  align-items: flex-start;
+}
+
+.warehouse-activity-row .badge {
+  flex-shrink: 0;
+}
+
+.warehouse-activity-row small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 3px;
+}

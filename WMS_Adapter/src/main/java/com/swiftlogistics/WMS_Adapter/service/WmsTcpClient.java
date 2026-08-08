@@ -19,17 +19,20 @@ public class WmsTcpClient {
     private final int port;
     private final int connectTimeoutMs;
     private final int readTimeoutMs;
+    private final WmsTcpStatusService wmsTcpStatusService;
 
     public WmsTcpClient(
             @Value("${wms.tcp.host}") String host,
             @Value("${wms.tcp.port}") int port,
             @Value("${wms.tcp.connect-timeout-ms}") int connectTimeoutMs,
-            @Value("${wms.tcp.read-timeout-ms}") int readTimeoutMs
+            @Value("${wms.tcp.read-timeout-ms}") int readTimeoutMs,
+            WmsTcpStatusService wmsTcpStatusService
     ) {
         this.host = host;
         this.port = port;
         this.connectTimeoutMs = connectTimeoutMs;
         this.readTimeoutMs = readTimeoutMs;
+        this.wmsTcpStatusService = wmsTcpStatusService;
     }
 
     public String sendMessage(String message) {
@@ -52,11 +55,22 @@ public class WmsTcpClient {
                 }
 
                 log.info("Received WMS TCP response: {}", response);
+                wmsTcpStatusService.recordSuccess();
                 return response;
             }
         } catch (IOException | IllegalStateException exception) {
-            throw new IllegalStateException("Failed to communicate with WMS TCP endpoint "
-                    + host + ":" + port + ": " + exception.getMessage(), exception);
+            String messageWithEndpoint = "Failed to communicate with WMS TCP endpoint "
+                    + host + ":" + port + ": " + exception.getMessage();
+            wmsTcpStatusService.recordFailure(messageWithEndpoint);
+            throw new IllegalStateException(messageWithEndpoint, exception);
         }
+    }
+
+    public String getHost() {
+        return host;
+    }
+
+    public int getPort() {
+        return port;
     }
 }

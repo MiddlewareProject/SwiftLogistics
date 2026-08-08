@@ -5,6 +5,11 @@ import com.swiftlogistics.tracking_service.dto.StatusUpdateRequest;
 import com.swiftlogistics.tracking_service.dto.TrackingHistoryResponse;
 import com.swiftlogistics.tracking_service.dto.TrackingResponse;
 import com.swiftlogistics.tracking_service.dto.TrackingUpdatedEvent;
+import com.swiftlogistics.tracking_service.dto.WarehouseActivityResponse;
+import com.swiftlogistics.tracking_service.dto.WarehouseCapacityResponse;
+import com.swiftlogistics.tracking_service.dto.WarehouseDashboardResponse;
+import com.swiftlogistics.tracking_service.dto.WarehouseDashboardStats;
+import com.swiftlogistics.tracking_service.dto.WarehousePackageResponse;
 import com.swiftlogistics.tracking_service.exception.InvalidTrackingStatusException;
 import com.swiftlogistics.tracking_service.exception.TrackingNotFoundException;
 import com.swiftlogistics.tracking_service.model.PackageTracking;
@@ -14,6 +19,7 @@ import com.swiftlogistics.tracking_service.repository.PackageTrackingRepository;
 import com.swiftlogistics.tracking_service.repository.TrackingHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +37,9 @@ public class TrackingService {
     private final TrackingHistoryRepository trackingHistoryRepository;
     private final TrackingUpdatedPublisher trackingUpdatedPublisher;
 
+    @Value("${warehouse.capacity}")
+    private long warehouseCapacity;
+
     @Transactional
     public void handlePackageStored(PackageStoredEvent event) {
         validateEvent(event);
@@ -46,6 +55,44 @@ public class TrackingService {
     public TrackingResponse getTracking(String orderNumber) {
         PackageTracking tracking = findTracking(orderNumber);
         return toTrackingResponse(tracking);
+    }
+
+    @Transactional(readOnly = true)
+    public WarehouseDashboardResponse getWarehouseDashboard() {
+        long stored = packageTrackingRepository.countByStatus(TrackingStatus.WAREHOUSE.name());
+        long totalCapacity = Math.max(warehouseCapacity, 0);
+
+        WarehouseDashboardStats stats = WarehouseDashboardStats.builder()
+                .received(packageTrackingRepository.count())
+                .stored(stored)
+                .loaded(packageTrackingRepository.countByStatus(TrackingStatus.LOADED.name()))
+                .outForDelivery(packageTrackingRepository.countByStatus(TrackingStatus.OUT_FOR_DELIVERY.name()))
+                .delivered(packageTrackingRepository.countByStatus(TrackingStatus.DELIVERED.name()))
+                .failed(packageTrackingRepository.countByStatus(TrackingStatus.FAILED.name()))
+                .build();
+
+        WarehouseCapacityResponse capacity = WarehouseCapacityResponse.builder()
+                .used(stored)
+                .total(totalCapacity)
+                .percentage(totalCapacity > 0 ? (stored * 100.0) / totalCapacity : 0.0)
+                .build();
+
+        List<WarehousePackageResponse> packages = packageTrackingRepository.findAllByOrderByUpdatedAtDesc()
+                .stream()
+                .map(this::toWarehousePackageResponse)
+                .toList();
+
+        List<WarehouseActivityResponse> recentActivity = trackingHistoryRepository.findTop10ByOrderByEventTimeDesc()
+                .stream()
+                .map(this::toWarehouseActivityResponse)
+                .toList();
+
+        return WarehouseDashboardResponse.builder()
+                .stats(stats)
+                .capacity(capacity)
+                .packages(packages)
+                .recentActivity(recentActivity)
+                .build();
     }
 
     @Transactional
@@ -175,6 +222,28 @@ public class TrackingService {
 
     private TrackingHistoryResponse toHistoryResponse(TrackingHistory history) {
         return TrackingHistoryResponse.builder()
+                .status(history.getStatus())
+                .location(history.getLocation())
+                .description(history.getDescription())
+                .eventTime(history.getEventTime())
+                .build();
+    }
+
+    private WarehousePackageResponse toWarehousePackageResponse(PackageTracking tracking) {
+        return WarehousePackageResponse.builder()
+                .orderNumber(tracking.getOrderNumber())
+                .clientId(tracking.getClientId())
+                .packageId(tracking.getPackageId())
+                .status(tracking.getStatus())
+                .currentLocation(tracking.getCurrentLocation())
+                .updatedAt(tracking.getUpdatedAt())
+                .build();
+    }
+
+    private WarehouseActivityResponse toWarehouseActivityResponse(TrackingHistory history) {
+        return WarehouseActivityResponse.builder()
+                .orderNumber(history.getOrderNumber())
+                .packageId(history.getPackageId())
                 .status(history.getStatus())
                 .location(history.getLocation())
                 .description(history.getDescription())

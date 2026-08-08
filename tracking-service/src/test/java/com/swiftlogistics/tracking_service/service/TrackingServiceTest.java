@@ -4,14 +4,17 @@ import com.swiftlogistics.tracking_service.dto.PackageStoredEvent;
 import com.swiftlogistics.tracking_service.dto.StatusUpdateRequest;
 import com.swiftlogistics.tracking_service.dto.TrackingResponse;
 import com.swiftlogistics.tracking_service.dto.TrackingUpdatedEvent;
+import com.swiftlogistics.tracking_service.dto.WarehouseDashboardResponse;
 import com.swiftlogistics.tracking_service.exception.InvalidTrackingStatusException;
 import com.swiftlogistics.tracking_service.exception.TrackingNotFoundException;
 import com.swiftlogistics.tracking_service.model.PackageTracking;
 import com.swiftlogistics.tracking_service.model.TrackingHistory;
 import com.swiftlogistics.tracking_service.repository.PackageTrackingRepository;
 import com.swiftlogistics.tracking_service.repository.TrackingHistoryRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -34,6 +37,11 @@ class TrackingServiceTest {
             trackingHistoryRepository,
             trackingUpdatedPublisher
     );
+
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(trackingService, "warehouseCapacity", 25L);
+    }
 
     @Test
     void handlesNewPackageStoredEvent() {
@@ -217,6 +225,58 @@ class TrackingServiceTest {
         assertThat(response.getHistory().get(0).getEventTime()).isEqualTo(storedAt);
         assertThat(response.getHistory().get(1).getStatus()).isEqualTo("LOADED");
         assertThat(response.getHistory().get(1).getEventTime()).isEqualTo(loadedAt);
+    }
+
+    @Test
+    void warehouseDashboardUsesCurrentTrackingDataAndRecentHistory() {
+        LocalDateTime oldest = LocalDateTime.of(2026, 8, 8, 9, 0);
+        LocalDateTime newest = LocalDateTime.of(2026, 8, 8, 12, 0);
+        PackageTracking newestPackage = packageTracking("WAREHOUSE", "A-12");
+        newestPackage.setOrderNumber("SL-NEWEST");
+        newestPackage.setUpdatedAt(newest);
+        PackageTracking olderPackage = packageTracking("DELIVERED", "Customer address");
+        olderPackage.setOrderNumber("SL-OLDER");
+        olderPackage.setUpdatedAt(oldest);
+
+        TrackingHistory latestHistory = history("LOADED", "Dock 2", "Package loaded onto delivery vehicle", newest);
+        latestHistory.setOrderNumber("SL-NEWEST");
+        TrackingHistory olderHistory = history("WAREHOUSE", "A-12", "Package stored in warehouse", oldest);
+        olderHistory.setOrderNumber("SL-OLDER");
+
+        when(packageTrackingRepository.count()).thenReturn(6L);
+        when(packageTrackingRepository.countByStatus("WAREHOUSE")).thenReturn(2L);
+        when(packageTrackingRepository.countByStatus("LOADED")).thenReturn(1L);
+        when(packageTrackingRepository.countByStatus("OUT_FOR_DELIVERY")).thenReturn(1L);
+        when(packageTrackingRepository.countByStatus("DELIVERED")).thenReturn(1L);
+        when(packageTrackingRepository.countByStatus("FAILED")).thenReturn(1L);
+        when(packageTrackingRepository.findAllByOrderByUpdatedAtDesc()).thenReturn(List.of(newestPackage, olderPackage));
+        when(trackingHistoryRepository.findTop10ByOrderByEventTimeDesc()).thenReturn(List.of(latestHistory, olderHistory));
+
+        WarehouseDashboardResponse dashboard = trackingService.getWarehouseDashboard();
+
+        assertThat(dashboard.getStats().getReceived()).isEqualTo(6);
+        assertThat(dashboard.getStats().getStored()).isEqualTo(2);
+        assertThat(dashboard.getStats().getLoaded()).isEqualTo(1);
+        assertThat(dashboard.getStats().getDelivered()).isEqualTo(1);
+        assertThat(dashboard.getCapacity().getUsed()).isEqualTo(2);
+        assertThat(dashboard.getCapacity().getTotal()).isEqualTo(25);
+        assertThat(dashboard.getCapacity().getPercentage()).isEqualTo(8.0);
+        assertThat(dashboard.getPackages()).extracting("orderNumber").containsExactly("SL-NEWEST", "SL-OLDER");
+        assertThat(dashboard.getRecentActivity()).extracting("orderNumber").containsExactly("SL-NEWEST", "SL-OLDER");
+    }
+
+    @Test
+    void warehouseDashboardHandlesZeroCapacitySafely() {
+        ReflectionTestUtils.setField(trackingService, "warehouseCapacity", 0L);
+        when(packageTrackingRepository.count()).thenReturn(1L);
+        when(packageTrackingRepository.countByStatus("WAREHOUSE")).thenReturn(1L);
+        when(packageTrackingRepository.findAllByOrderByUpdatedAtDesc()).thenReturn(List.of());
+        when(trackingHistoryRepository.findTop10ByOrderByEventTimeDesc()).thenReturn(List.of());
+
+        WarehouseDashboardResponse dashboard = trackingService.getWarehouseDashboard();
+
+        assertThat(dashboard.getCapacity().getTotal()).isZero();
+        assertThat(dashboard.getCapacity().getPercentage()).isZero();
     }
 
     private void assertSuccessfulTransition(String currentStatus, String requestedStatus, String location, String expectedDescription) {
