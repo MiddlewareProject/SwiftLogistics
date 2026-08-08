@@ -20,6 +20,9 @@ public class RabbitMqConfig {
     public static final String ORDER_EXCHANGE = "order.exchange";
     public static final String ORDER_ROUTING_KEY = "order.created";
 
+    public static final String PACKAGE_STORED_EXCHANGE = "package.stored.exchange";
+    public static final String PACKAGE_STORED_ROUTING_KEY = "package.stored";
+
     @Bean
     public ObjectMapper objectMapper() {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -43,6 +46,11 @@ public class RabbitMqConfig {
             @Qualifier("orderExchange") TopicExchange orderExchange
     ) {
         return BindingBuilder.bind(orderCreatedQueue).to(orderExchange).with(ORDER_ROUTING_KEY);
+    }
+
+    @Bean
+    public TopicExchange packageStoredExchange() {
+        return new TopicExchange(PACKAGE_STORED_EXCHANGE);
     }
 
     @Bean
