@@ -35,7 +35,13 @@ public class GatewayConfig {
         .before(uri(URI.create("http://ros-adapter:8084")))
         .build();
 
-    return orderRoutes.andOther(cmsRoutes).andOther(rosRoutes);
+    RouterFunction<ServerResponse> trackingRoutes = route("tracking-service-route")
+        .route(RequestPredicates.path("/api/tracking/**"), http())
+        .filter(jwtAuthenticationFilter)
+        .before(uri(URI.create("http://tracking-service:8082")))
+        .build();
+
+    return orderRoutes.andOther(cmsRoutes).andOther(rosRoutes).andOther(trackingRoutes);
     }
 
     @Bean
