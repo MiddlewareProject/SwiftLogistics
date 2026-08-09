@@ -6,6 +6,8 @@ const AUTH_USER_STORAGE_KEY = 'swifttrack-auth-user';
 const REGISTERED_ACCOUNTS_STORAGE_KEY = 'swifttrack-registered-accounts';
 const DASHBOARD_SCREEN_STORAGE_KEY = 'swifttrack-current-screen';
 const DASHBOARD_TAB_STORAGE_KEY = 'swifttrack-dashboard-tab';
+const DRIVER_VERIFIED_SESSION_KEY = 'swifttrack_driver_verified';
+const DRIVER_ID_SESSION_KEY = 'swifttrack_driver_id';
 
 const readStoredValue = (key, fallback) => {
   if (typeof window === 'undefined') {
@@ -30,6 +32,30 @@ const writeStoredValue = (key, value) => {
   }
 
   window.localStorage.setItem(key, JSON.stringify(value));
+};
+
+const readSessionValue = (key, fallback = '') => {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  return window.sessionStorage.getItem(key) || fallback;
+};
+
+const writeSessionValue = (key, value) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.sessionStorage.setItem(key, value);
+};
+
+const removeSessionValue = (key) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.sessionStorage.removeItem(key);
 };
 
 const seedRegisteredAccounts = [
@@ -176,6 +202,17 @@ const getWarehouseStatusBadge = (status) => {
   return 'badge-transit';
 };
 
+const getDeliveryProgress = (status) => {
+  const progress = {
+    WAREHOUSE: 20,
+    LOADED: 40,
+    OUT_FOR_DELIVERY: 75,
+    DELIVERED: 100,
+    FAILED: 100
+  };
+  return progress[status] || 0;
+};
+
 const formatDateTime = (value) => {
   if (!value) return 'Not available';
   return new Date(value).toLocaleString([], {
@@ -315,6 +352,19 @@ function App() {
   const [selectedWarehouseTracking, setSelectedWarehouseTracking] = useState(null);
   const [selectedWarehouseTrackingLoading, setSelectedWarehouseTrackingLoading] = useState(false);
   const [selectedWarehouseTrackingError, setSelectedWarehouseTrackingError] = useState('');
+  const [driverVerified, setDriverVerified] = useState(() => readSessionValue(DRIVER_VERIFIED_SESSION_KEY) === 'true');
+  const [driverId, setDriverId] = useState(() => readSessionValue(DRIVER_ID_SESSION_KEY));
+  const [driverLoginId, setDriverLoginId] = useState('');
+  const [driverPassword, setDriverPassword] = useState('');
+  const [driverLoginError, setDriverLoginError] = useState('');
+  const [driverDashboard, setDriverDashboard] = useState(null);
+  const [driverLoading, setDriverLoading] = useState(false);
+  const [driverError, setDriverError] = useState('');
+  const [selectedDelivery, setSelectedDelivery] = useState(null);
+  const [selectedDeliveryTracking, setSelectedDeliveryTracking] = useState(null);
+  const [selectedDeliveryOrder, setSelectedDeliveryOrder] = useState(null);
+  const [selectedDeliveryLoading, setSelectedDeliveryLoading] = useState(false);
+  const [selectedDeliveryError, setSelectedDeliveryError] = useState('');
 
   useEffect(() => {
     writeStoredValue(DASHBOARD_SCREEN_STORAGE_KEY, currentScreen);
@@ -617,6 +667,98 @@ function App() {
     };
   }, [dashboardTab, selectedWarehousePackage, user]);
 
+  useEffect(() => {
+    if (dashboardTab !== 'driver' || !driverVerified || !user?.token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadDriverDashboard = async () => {
+      setDriverLoading(true);
+      setDriverError('');
+
+      try {
+        const response = await fetch(`${API_BASE}/api/tracking/dashboard`, {
+          headers: { Authorization: `Bearer ${user.token}` }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Driver manifest request failed with ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          setDriverDashboard(data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDriverDashboard(null);
+          setDriverError(error.message || 'Unable to load driver manifest');
+        }
+      } finally {
+        if (!cancelled) {
+          setDriverLoading(false);
+        }
+      }
+    };
+
+    loadDriverDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, driverVerified, user]);
+
+  useEffect(() => {
+    if (dashboardTab !== 'driver' || !user?.token || !selectedDelivery?.orderNumber) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadDeliveryDetails = async () => {
+      setSelectedDeliveryLoading(true);
+      setSelectedDeliveryError('');
+      setSelectedDeliveryTracking(null);
+      setSelectedDeliveryOrder(null);
+
+      try {
+        const authHeaders = { Authorization: `Bearer ${user.token}` };
+        const [trackingResponse, orderResponse] = await Promise.all([
+          fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}`, { headers: authHeaders }),
+          fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders })
+        ]);
+
+        if (!trackingResponse.ok) {
+          throw new Error(`Tracking detail request failed with ${trackingResponse.status}`);
+        }
+
+        const trackingData = await trackingResponse.json();
+        const orderData = orderResponse.ok ? await orderResponse.json() : null;
+
+        if (!cancelled) {
+          setSelectedDeliveryTracking(trackingData);
+          setSelectedDeliveryOrder(orderData);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSelectedDeliveryError(error.message || 'Unable to load delivery details');
+        }
+      } finally {
+        if (!cancelled) {
+          setSelectedDeliveryLoading(false);
+        }
+      }
+    };
+
+    loadDeliveryDetails();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, selectedDelivery, user]);
+
   const rosSummaryMetrics = rosDashboard
     ? [
         { label: 'Routes Generated', value: String(rosDashboard.routesGenerated), tone: 'primary' },
@@ -665,6 +807,19 @@ function App() {
     : wmsStatusValue === 'OFFLINE'
       ? 'badge-failed'
       : 'badge-pending';
+  const driverPackages = (driverDashboard?.packages || []).filter((pkg) =>
+    ['LOADED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'].includes(pkg.status)
+  );
+  const driverStats = {
+    todaysDeliveries: driverPackages.length,
+    remaining: driverPackages.filter((pkg) => pkg.status === 'LOADED' || pkg.status === 'OUT_FOR_DELIVERY').length,
+    inProgress: driverPackages.filter((pkg) => pkg.status === 'OUT_FOR_DELIVERY').length,
+    completed: driverPackages.filter((pkg) => pkg.status === 'DELIVERED' || pkg.status === 'FAILED').length
+  };
+  const selectedOrderInfo = selectedDeliveryOrder || orders.find((order) => order.id === selectedDelivery?.orderNumber) || {};
+  const deliveryProgress = getDeliveryProgress(selectedDeliveryTracking?.status || selectedDelivery?.status);
+  const mapAddress = selectedOrderInfo.recipientAddress || selectedOrderInfo.deliveryAddress;
+  const mapsHref = mapAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapAddress)}` : '';
 
   // Count unread notifications
   const unreadCount = notifications.filter(n => n.unread).length;
@@ -872,6 +1027,36 @@ function App() {
     } else {
       alert(`Order number ${trackingSearchTerm} not found. Try one from the order history list (e.g. ST-902148).`);
     }
+  };
+
+  const handleDriverLoginSubmit = (e) => {
+    e.preventDefault();
+    if (!driverLoginId.trim() || !driverPassword.trim()) {
+      setDriverLoginError('Driver ID and password are required for this prototype access screen.');
+      return;
+    }
+
+    // Prototype-only frontend gate: real driver authentication belongs to the Driver backend owner.
+    writeSessionValue(DRIVER_VERIFIED_SESSION_KEY, 'true');
+    writeSessionValue(DRIVER_ID_SESSION_KEY, driverLoginId.trim());
+    setDriverId(driverLoginId.trim());
+    setDriverVerified(true);
+    setDriverLoginError('');
+    setDriverLoginId('');
+    setDriverPassword('');
+  };
+
+  const handleDriverLogout = () => {
+    removeSessionValue(DRIVER_VERIFIED_SESSION_KEY);
+    removeSessionValue(DRIVER_ID_SESSION_KEY);
+    setDriverVerified(false);
+    setDriverId('');
+    setDriverLoginId('');
+    setDriverPassword('');
+    setDriverLoginError('');
+    setSelectedDelivery(null);
+    setSelectedDeliveryTracking(null);
+    setSelectedDeliveryOrder(null);
   };
 
   // Handle Contact Form Submit
@@ -1451,6 +1636,15 @@ function App() {
                 >
                   <ShieldCheckIcon />
                   <span>Warehouse</span>
+                </div>
+              </li>
+              <li>
+                <div
+                  className={`sidebar-item ${dashboardTab === 'driver' ? 'active' : ''}`}
+                  onClick={() => setDashboardTab('driver')}
+                >
+                  <TruckIcon />
+                  <span>Driver Portal</span>
                 </div>
               </li>
               {user.role === 'ADMIN' && (
@@ -2140,6 +2334,230 @@ function App() {
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* DRIVER PORTAL */}
+            {dashboardTab === 'driver' && (
+              <div>
+                {!driverVerified ? (
+                  <div className="driver-login-shell">
+                    <div className="card driver-login-card">
+                      <div className="driver-login-icon">
+                        <TruckIcon />
+                      </div>
+                      <h1>Driver Login</h1>
+                      <p>This prototype verifies access inside the authenticated SwiftTrack session.</p>
+                      {driverLoginError && <div className="error-message">{driverLoginError}</div>}
+                      <form onSubmit={handleDriverLoginSubmit} className="driver-login-form">
+                        <div className="order-form-group">
+                          <label htmlFor="driver-id">Driver ID</label>
+                          <input
+                            id="driver-id"
+                            type="text"
+                            className="order-input"
+                            placeholder="e.g. DRV-102"
+                            value={driverLoginId}
+                            onChange={(e) => setDriverLoginId(e.target.value)}
+                          />
+                        </div>
+                        <div className="order-form-group">
+                          <label htmlFor="driver-password">Password</label>
+                          <input
+                            id="driver-password"
+                            type="password"
+                            className="order-input"
+                            placeholder="Password"
+                            value={driverPassword}
+                            onChange={(e) => setDriverPassword(e.target.value)}
+                          />
+                        </div>
+                        <button type="submit" className="btn btn-primary driver-wide-button">
+                          Sign In
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                ) : selectedDelivery ? (
+                  <div className="driver-portal">
+                    <header className="driver-header">
+                      <div>
+                        <button className="btn btn-secondary driver-back-button" onClick={() => setSelectedDelivery(null)}>
+                          Back to Manifest
+                        </button>
+                        <h1>Delivery Details</h1>
+                        <p>{selectedDelivery.packageId} for order {selectedDelivery.orderNumber}</p>
+                      </div>
+                      <button className="btn btn-secondary" onClick={handleDriverLogout}>
+                        Driver Logout
+                      </button>
+                    </header>
+
+                    {selectedDeliveryLoading && <div className="card">Loading delivery details...</div>}
+                    {selectedDeliveryError && <div className="card" style={{ color: 'var(--status-failed)' }}>{selectedDeliveryError}</div>}
+
+                    <div className="driver-detail-grid">
+                      <div className="card driver-detail-card">
+                        <div className="driver-detail-title-row">
+                          <div>
+                            <span className="cms-preview-label">Current Delivery</span>
+                            <h2>{selectedDelivery.packageId}</h2>
+                          </div>
+                          <span className={`badge ${getWarehouseStatusBadge(selectedDeliveryTracking?.status || selectedDelivery.status)}`}>
+                            {toWarehouseStatusLabel(selectedDeliveryTracking?.status || selectedDelivery.status)}
+                          </span>
+                        </div>
+
+                        <div className={`driver-progress-bar ${(selectedDeliveryTracking?.status || selectedDelivery.status) === 'FAILED' ? 'failed' : ''}`}>
+                          <div style={{ width: `${deliveryProgress}%` }}></div>
+                        </div>
+                        <div className="driver-progress-label">{deliveryProgress}% progress</div>
+
+                        <div className="driver-info-grid">
+                          <div>
+                            <span>Order Number</span>
+                            <strong>{selectedDelivery.orderNumber}</strong>
+                          </div>
+                          <div>
+                            <span>Current Location</span>
+                            <strong>{selectedDeliveryTracking?.currentLocation || selectedDelivery.currentLocation || 'Not available'}</strong>
+                          </div>
+                          <div>
+                            <span>Customer</span>
+                            <strong>{selectedOrderInfo.receiverName || 'Not available'}</strong>
+                          </div>
+                          <div>
+                            <span>Phone</span>
+                            <strong>{selectedOrderInfo.receiverPhone || 'Not available'}</strong>
+                          </div>
+                          <div>
+                            <span>Delivery Address</span>
+                            <strong>{selectedOrderInfo.recipientAddress || selectedOrderInfo.deliveryAddress || 'Not available'}</strong>
+                          </div>
+                          <div>
+                            <span>Sender Address</span>
+                            <strong>{selectedOrderInfo.senderAddress || selectedOrderInfo.pickupAddress || 'Not available'}</strong>
+                          </div>
+                          <div className="driver-info-wide">
+                            <span>Delivery Notes</span>
+                            <strong>{selectedOrderInfo.deliveryNotes || selectedOrderInfo.notes || selectedOrderInfo.description || 'Not available'}</strong>
+                          </div>
+                        </div>
+
+                        <div className="driver-action-row">
+                          {selectedOrderInfo.receiverPhone ? (
+                            <a className="btn btn-primary" href={`tel:${selectedOrderInfo.receiverPhone}`}>Call Customer</a>
+                          ) : (
+                            <button className="btn btn-primary" disabled>Call Customer</button>
+                          )}
+                          <button className="btn btn-secondary" disabled>Mark Delivered</button>
+                          <button className="btn btn-secondary" disabled>Mark Failed</button>
+                        </div>
+                        <p className="driver-disabled-note">Proof of Delivery required</p>
+                      </div>
+
+                      <div className="driver-side-stack">
+                        <div className="card driver-map-card">
+                          <div className="cms-preview-label">Route Preview</div>
+                          <div className="driver-map-placeholder">
+                            <div className="driver-map-node">Warehouse</div>
+                            <div className="driver-map-path"></div>
+                            <div className="driver-map-node destination">{mapAddress || 'Recipient address unavailable'}</div>
+                          </div>
+                          {mapsHref ? (
+                            <a href={mapsHref} target="_blank" rel="noreferrer" className="btn btn-secondary driver-wide-button">
+                              Open in Maps
+                            </a>
+                          ) : (
+                            <button className="btn btn-secondary driver-wide-button" disabled>Open in Maps</button>
+                          )}
+                        </div>
+
+                        <div className="card driver-history-card">
+                          <div className="cms-preview-label">Tracking History</div>
+                          {selectedDeliveryTracking?.history?.length ? (
+                            <div className="warehouse-timeline">
+                              {selectedDeliveryTracking.history.map((item) => (
+                                <div className="warehouse-timeline-item" key={`${item.status}-${item.eventTime}`}>
+                                  <span className={`warehouse-timeline-dot ${item.status === 'FAILED' ? 'failed' : ''}`}></span>
+                                  <div>
+                                    <div className="warehouse-timeline-title">{toWarehouseStatusLabel(item.status)}</div>
+                                    <div className="warehouse-timeline-meta">{item.location || 'No location'} - {formatDateTime(item.eventTime)}</div>
+                                    <p>{item.description || 'No description provided'}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="warehouse-empty-state">No tracking history available.</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="driver-portal">
+                    <header className="driver-header">
+                      <div>
+                        <h1>Driver Dashboard</h1>
+                        <p>Driver {driverId || 'Portal'} delivery manifest</p>
+                      </div>
+                      <button className="btn btn-secondary" onClick={handleDriverLogout}>
+                        Driver Logout
+                      </button>
+                    </header>
+
+                    {driverLoading && <div className="card">Loading driver manifest...</div>}
+                    {driverError && <div className="card" style={{ color: 'var(--status-failed)' }}>{driverError}</div>}
+
+                    <div className="driver-stats-grid">
+                      {[
+                        { label: "Today's Deliveries", value: driverStats.todaysDeliveries },
+                        { label: 'Remaining', value: driverStats.remaining },
+                        { label: 'In Progress', value: driverStats.inProgress },
+                        { label: 'Completed', value: driverStats.completed }
+                      ].map((metric) => (
+                        <div className="card driver-stat-card" key={metric.label}>
+                          <span>{metric.label}</span>
+                          <strong>{metric.value}</strong>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="card driver-manifest-card">
+                      <div className="cms-panel-header compact">
+                        <div>
+                          <h3>Today's Deliveries</h3>
+                          <p>Loaded, out-for-delivery, delivered, and failed packages from tracking</p>
+                        </div>
+                      </div>
+
+                      <div className="driver-manifest-list">
+                        {driverPackages.length === 0 ? (
+                          <div className="driver-empty-state">No deliveries assigned for today</div>
+                        ) : (
+                          driverPackages.map((pkg) => (
+                            <div className="driver-package-card" key={pkg.orderNumber}>
+                              <div>
+                                <div className="driver-package-id">{pkg.packageId}</div>
+                                <div className="driver-package-meta">{pkg.orderNumber}</div>
+                                <div className="driver-package-meta">{pkg.currentLocation || 'Current location not available'}</div>
+                              </div>
+                              <div className="driver-package-actions">
+                                <span className={`badge ${getWarehouseStatusBadge(pkg.status)}`}>
+                                  {toWarehouseStatusLabel(pkg.status)}
+                                </span>
+                                <button className="btn btn-primary" onClick={() => setSelectedDelivery(pkg)}>
+                                  View Delivery
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
