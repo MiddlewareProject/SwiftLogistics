@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './App.css';
 
 const API_BASE = 'http://localhost:8080';
@@ -365,6 +365,20 @@ function App() {
   const [selectedDeliveryOrder, setSelectedDeliveryOrder] = useState(null);
   const [selectedDeliveryLoading, setSelectedDeliveryLoading] = useState(false);
   const [selectedDeliveryError, setSelectedDeliveryError] = useState('');
+  const [deliveryActionLoading, setDeliveryActionLoading] = useState('');
+  const [deliveryActionError, setDeliveryActionError] = useState('');
+  const [podOpen, setPodOpen] = useState(false);
+  const [podPhotoFile, setPodPhotoFile] = useState(null);
+  const [podPhotoPreviewUrl, setPodPhotoPreviewUrl] = useState('');
+  const [podNote, setPodNote] = useState('');
+  const [podSignatureDrawn, setPodSignatureDrawn] = useState(false);
+  const [podValidationError, setPodValidationError] = useState('');
+  const [failureOpen, setFailureOpen] = useState(false);
+  const [failureReason, setFailureReason] = useState('');
+  const [failureNote, setFailureNote] = useState('');
+  const [failureValidationError, setFailureValidationError] = useState('');
+  const signatureCanvasRef = useRef(null);
+  const signatureDrawingRef = useRef(false);
 
   useEffect(() => {
     writeStoredValue(DASHBOARD_SCREEN_STORAGE_KEY, currentScreen);
@@ -759,6 +773,14 @@ function App() {
     };
   }, [dashboardTab, selectedDelivery, user]);
 
+  useEffect(() => {
+    return () => {
+      if (podPhotoPreviewUrl) {
+        URL.revokeObjectURL(podPhotoPreviewUrl);
+      }
+    };
+  }, [podPhotoPreviewUrl]);
+
   const rosSummaryMetrics = rosDashboard
     ? [
         { label: 'Routes Generated', value: String(rosDashboard.routesGenerated), tone: 'primary' },
@@ -817,9 +839,16 @@ function App() {
     completed: driverPackages.filter((pkg) => pkg.status === 'DELIVERED' || pkg.status === 'FAILED').length
   };
   const selectedOrderInfo = selectedDeliveryOrder || orders.find((order) => order.id === selectedDelivery?.orderNumber) || {};
-  const deliveryProgress = getDeliveryProgress(selectedDeliveryTracking?.status || selectedDelivery?.status);
+  const currentDeliveryStatus = selectedDeliveryTracking?.status || selectedDelivery?.status;
+  const deliveryProgress = getDeliveryProgress(currentDeliveryStatus);
   const mapAddress = selectedOrderInfo.recipientAddress || selectedOrderInfo.deliveryAddress;
   const mapsHref = mapAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapAddress)}` : '';
+  const bestDeliveryLocation = mapAddress
+    || selectedDeliveryTracking?.currentLocation
+    || selectedDelivery?.currentLocation
+    || '';
+  const canConfirmPod = Boolean(podPhotoFile && podSignatureDrawn && !deliveryActionLoading);
+  const canConfirmFailure = Boolean(failureReason && !deliveryActionLoading);
 
   // Count unread notifications
   const unreadCount = notifications.filter(n => n.unread).length;
@@ -1057,6 +1086,228 @@ function App() {
     setSelectedDelivery(null);
     setSelectedDeliveryTracking(null);
     setSelectedDeliveryOrder(null);
+    setPodOpen(false);
+    setFailureOpen(false);
+  };
+
+  const refreshDriverDashboard = async () => {
+    if (!user?.token) {
+      return null;
+    }
+
+    const response = await fetch(`${API_BASE}/api/tracking/dashboard`, {
+      headers: { Authorization: `Bearer ${user.token}` }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Driver manifest request failed with ${response.status}`);
+    }
+
+    const data = await response.json();
+    setDriverDashboard(data);
+    setSelectedDelivery((current) => {
+      if (!current) {
+        return current;
+      }
+      return (data.packages || []).find((pkg) => pkg.orderNumber === current.orderNumber) || current;
+    });
+    return data;
+  };
+
+  const refreshSelectedDeliveryDetails = async () => {
+    if (!user?.token || !selectedDelivery?.orderNumber) {
+      return;
+    }
+
+    const authHeaders = { Authorization: `Bearer ${user.token}` };
+    const [trackingResponse, orderResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}`, { headers: authHeaders }),
+      fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders })
+    ]);
+
+    if (!trackingResponse.ok) {
+      throw new Error(`Tracking detail request failed with ${trackingResponse.status}`);
+    }
+
+    setSelectedDeliveryTracking(await trackingResponse.json());
+    setSelectedDeliveryOrder(orderResponse.ok ? await orderResponse.json() : null);
+  };
+
+  const updateDeliveryStatus = async ({ status, location, description, loadingKey }) => {
+    if (!user?.token || !selectedDelivery?.orderNumber) {
+      return;
+    }
+
+    setDeliveryActionLoading(loadingKey);
+    setDeliveryActionError('');
+
+    try {
+      const response = await fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${user.token}`
+        },
+        body: JSON.stringify({ status, location, description })
+      });
+
+      const bodyText = await response.text();
+      if (!response.ok) {
+        throw new Error(bodyText || `Tracking update failed with ${response.status}`);
+      }
+
+      await refreshSelectedDeliveryDetails();
+      await refreshDriverDashboard();
+    } catch (error) {
+      setDeliveryActionError(error.message || 'Unable to update delivery status');
+      throw error;
+    } finally {
+      setDeliveryActionLoading('');
+    }
+  };
+
+  const handleStartDelivery = async () => {
+    try {
+      await updateDeliveryStatus({
+        status: 'OUT_FOR_DELIVERY',
+        location: 'In transit',
+        description: 'Driver started delivery',
+        loadingKey: 'start'
+      });
+    } catch {
+      // Error state is shown in the delivery details panel.
+    }
+  };
+
+  const clearPodState = () => {
+    setPodOpen(false);
+    setPodPhotoFile(null);
+    setPodPhotoPreviewUrl('');
+    setPodNote('');
+    setPodSignatureDrawn(false);
+    setPodValidationError('');
+    const canvas = signatureCanvasRef.current;
+    if (canvas) {
+      const context = canvas.getContext('2d');
+      context.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  };
+
+  const clearFailureState = () => {
+    setFailureOpen(false);
+    setFailureReason('');
+    setFailureNote('');
+    setFailureValidationError('');
+  };
+
+  const handlePodPhotoChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    setPodPhotoFile(file);
+    setPodValidationError('');
+
+    if (podPhotoPreviewUrl) {
+      URL.revokeObjectURL(podPhotoPreviewUrl);
+    }
+
+    setPodPhotoPreviewUrl(file ? URL.createObjectURL(file) : '');
+  };
+
+  const getSignaturePoint = (event) => {
+    const canvas = signatureCanvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height
+    };
+  };
+
+  const handleSignaturePointerDown = (event) => {
+    const canvas = signatureCanvasRef.current;
+    const context = canvas.getContext('2d');
+    const point = getSignaturePoint(event);
+    signatureDrawingRef.current = true;
+    canvas.setPointerCapture(event.pointerId);
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+  };
+
+  const handleSignaturePointerMove = (event) => {
+    if (!signatureDrawingRef.current) {
+      return;
+    }
+
+    const canvas = signatureCanvasRef.current;
+    const context = canvas.getContext('2d');
+    const point = getSignaturePoint(event);
+    context.lineWidth = 3;
+    context.lineCap = 'round';
+    context.strokeStyle = '#0f172a';
+    context.lineTo(point.x, point.y);
+    context.stroke();
+    setPodSignatureDrawn(true);
+  };
+
+  const handleSignaturePointerUp = () => {
+    signatureDrawingRef.current = false;
+  };
+
+  const clearSignature = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    const context = canvas.getContext('2d');
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    setPodSignatureDrawn(false);
+  };
+
+  const handleConfirmDelivery = async () => {
+    if (!podPhotoFile || !podSignatureDrawn) {
+      setPodValidationError('Delivery photo and customer signature are required.');
+      return;
+    }
+
+    const note = podNote.trim();
+    const description = note
+      ? `Package delivered successfully with proof of delivery - ${note}`
+      : 'Package delivered successfully with proof of delivery';
+
+    try {
+      await updateDeliveryStatus({
+        status: 'DELIVERED',
+        location: bestDeliveryLocation,
+        description,
+        loadingKey: 'delivered'
+      });
+      clearPodState();
+    } catch {
+      // Error state is shown in the delivery details panel.
+    }
+  };
+
+  const handleConfirmFailure = async () => {
+    if (!failureReason) {
+      setFailureValidationError('Failure reason is required.');
+      return;
+    }
+
+    const note = failureNote.trim();
+    const description = note
+      ? `Delivery failed: ${failureReason} - ${note}`
+      : `Delivery failed: ${failureReason}`;
+
+    try {
+      await updateDeliveryStatus({
+        status: 'FAILED',
+        location: bestDeliveryLocation,
+        description,
+        loadingKey: 'failed'
+      });
+      clearFailureState();
+    } catch {
+      // Error state is shown in the delivery details panel.
+    }
   };
 
   // Handle Contact Form Submit
@@ -2382,7 +2633,11 @@ function App() {
                   <div className="driver-portal">
                     <header className="driver-header">
                       <div>
-                        <button className="btn btn-secondary driver-back-button" onClick={() => setSelectedDelivery(null)}>
+                        <button className="btn btn-secondary driver-back-button" onClick={() => {
+                          clearPodState();
+                          clearFailureState();
+                          setSelectedDelivery(null);
+                        }}>
                           Back to Manifest
                         </button>
                         <h1>Delivery Details</h1>
@@ -2450,10 +2705,169 @@ function App() {
                           ) : (
                             <button className="btn btn-primary" disabled>Call Customer</button>
                           )}
-                          <button className="btn btn-secondary" disabled>Mark Delivered</button>
-                          <button className="btn btn-secondary" disabled>Mark Failed</button>
+                          {currentDeliveryStatus === 'LOADED' && (
+                            <button className="btn btn-primary" onClick={handleStartDelivery} disabled={Boolean(deliveryActionLoading)}>
+                              {deliveryActionLoading === 'start' ? 'Starting...' : 'Start Delivery'}
+                            </button>
+                          )}
+                          {currentDeliveryStatus === 'OUT_FOR_DELIVERY' && (
+                            <>
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => {
+                                  setPodOpen(true);
+                                  setFailureOpen(false);
+                                  setDeliveryActionError('');
+                                }}
+                                disabled={Boolean(deliveryActionLoading)}
+                              >
+                                Mark Delivered
+                              </button>
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => {
+                                  setFailureOpen(true);
+                                  setPodOpen(false);
+                                  setDeliveryActionError('');
+                                }}
+                                disabled={Boolean(deliveryActionLoading)}
+                              >
+                                Mark Failed
+                              </button>
+                            </>
+                          )}
                         </div>
-                        <p className="driver-disabled-note">Proof of Delivery required</p>
+                        {currentDeliveryStatus === 'LOADED' && (
+                          <p className="driver-disabled-note">Delivery must be started before final delivery actions are available.</p>
+                        )}
+                        {currentDeliveryStatus === 'OUT_FOR_DELIVERY' && (
+                          <p className="driver-disabled-note">Proof of Delivery required for successful delivery.</p>
+                        )}
+                        {currentDeliveryStatus === 'DELIVERED' && (
+                          <div className="driver-terminal-state completed">Delivery completed successfully.</div>
+                        )}
+                        {currentDeliveryStatus === 'FAILED' && (
+                          <div className="driver-terminal-state failed">Delivery marked as failed.</div>
+                        )}
+                        {deliveryActionError && <div className="error-message driver-action-error">{deliveryActionError}</div>}
+
+                        {podOpen && (
+                          <div className="driver-action-panel">
+                            <div className="cms-panel-header compact">
+                              <div>
+                                <h3>Proof of Delivery</h3>
+                                <p>{selectedDelivery.packageId} for {selectedDelivery.orderNumber}</p>
+                              </div>
+                            </div>
+                            <div className="driver-pod-grid">
+                              <div className="order-form-group">
+                                <label htmlFor="pod-photo">Delivery Photo</label>
+                                <input
+                                  id="pod-photo"
+                                  type="file"
+                                  className="order-input"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={handlePodPhotoChange}
+                                  disabled={Boolean(deliveryActionLoading)}
+                                />
+                                {podPhotoPreviewUrl ? (
+                                  <img className="driver-photo-preview" src={podPhotoPreviewUrl} alt="Selected delivery proof preview" />
+                                ) : (
+                                  <div className="driver-photo-empty">No delivery photo selected</div>
+                                )}
+                              </div>
+                              <div className="order-form-group">
+                                <label>Customer Signature</label>
+                                {/* Frontend POD capture for the Member 4 prototype; persistent POD storage belongs to the POD/delivery backend owner. */}
+                                <canvas
+                                  ref={signatureCanvasRef}
+                                  className="driver-signature-canvas"
+                                  width="520"
+                                  height="180"
+                                  onPointerDown={handleSignaturePointerDown}
+                                  onPointerMove={handleSignaturePointerMove}
+                                  onPointerUp={handleSignaturePointerUp}
+                                  onPointerLeave={handleSignaturePointerUp}
+                                ></canvas>
+                                <button type="button" className="btn btn-secondary driver-wide-button" onClick={clearSignature} disabled={Boolean(deliveryActionLoading)}>
+                                  Clear Signature
+                                </button>
+                              </div>
+                            </div>
+                            <div className="order-form-group">
+                              <label htmlFor="pod-note">Delivery Note</label>
+                              <textarea
+                                id="pod-note"
+                                className="order-textarea"
+                                placeholder="Optional recipient or handoff note"
+                                value={podNote}
+                                onChange={(e) => setPodNote(e.target.value)}
+                                disabled={Boolean(deliveryActionLoading)}
+                              ></textarea>
+                            </div>
+                            {podValidationError && <div className="error-message">{podValidationError}</div>}
+                            <div className="driver-action-row">
+                              <button type="button" className="btn btn-secondary" onClick={clearPodState} disabled={Boolean(deliveryActionLoading)}>
+                                Cancel
+                              </button>
+                              <button type="button" className="btn btn-primary" onClick={handleConfirmDelivery} disabled={!canConfirmPod}>
+                                {deliveryActionLoading === 'delivered' ? 'Confirming...' : 'Confirm Delivery'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {failureOpen && (
+                          <div className="driver-action-panel">
+                            <div className="cms-panel-header compact">
+                              <div>
+                                <h3>Failed Delivery</h3>
+                                <p>Record the real reason for this delivery attempt</p>
+                              </div>
+                            </div>
+                            <div className="order-form-group">
+                              <label htmlFor="failure-reason">Failure Reason</label>
+                              <select
+                                id="failure-reason"
+                                className="order-select"
+                                value={failureReason}
+                                onChange={(e) => {
+                                  setFailureReason(e.target.value);
+                                  setFailureValidationError('');
+                                }}
+                                disabled={Boolean(deliveryActionLoading)}
+                              >
+                                <option value="">Select reason</option>
+                                <option value="Customer unavailable">Customer unavailable</option>
+                                <option value="Incorrect address">Incorrect address</option>
+                                <option value="Customer refused package">Customer refused package</option>
+                                <option value="Unable to contact customer">Unable to contact customer</option>
+                                <option value="Other">Other</option>
+                              </select>
+                            </div>
+                            <div className="order-form-group">
+                              <label htmlFor="failure-note">Additional Notes</label>
+                              <textarea
+                                id="failure-note"
+                                className="order-textarea"
+                                placeholder="Optional context for dispatch"
+                                value={failureNote}
+                                onChange={(e) => setFailureNote(e.target.value)}
+                                disabled={Boolean(deliveryActionLoading)}
+                              ></textarea>
+                            </div>
+                            {failureValidationError && <div className="error-message">{failureValidationError}</div>}
+                            <div className="driver-action-row">
+                              <button type="button" className="btn btn-secondary" onClick={clearFailureState} disabled={Boolean(deliveryActionLoading)}>
+                                Cancel
+                              </button>
+                              <button type="button" className="btn btn-primary" onClick={handleConfirmFailure} disabled={!canConfirmFailure}>
+                                {deliveryActionLoading === 'failed' ? 'Confirming...' : 'Confirm Failure'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div className="driver-side-stack">
@@ -2547,7 +2961,12 @@ function App() {
                                 <span className={`badge ${getWarehouseStatusBadge(pkg.status)}`}>
                                   {toWarehouseStatusLabel(pkg.status)}
                                 </span>
-                                <button className="btn btn-primary" onClick={() => setSelectedDelivery(pkg)}>
+                                <button className="btn btn-primary" onClick={() => {
+                                  clearPodState();
+                                  clearFailureState();
+                                  setDeliveryActionError('');
+                                  setSelectedDelivery(pkg);
+                                }}>
                                   View Delivery
                                 </button>
                               </div>
