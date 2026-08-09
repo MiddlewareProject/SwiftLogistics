@@ -198,7 +198,7 @@ const toWarehouseStatusLabel = (status) => {
 const getWarehouseStatusBadge = (status) => {
   if (status === 'DELIVERED') return 'badge-completed';
   if (status === 'FAILED') return 'badge-failed';
-  if (status === 'WAREHOUSE') return 'badge-pending';
+  if (status === 'PENDING' || status === 'WAREHOUSE') return 'badge-pending';
   return 'badge-transit';
 };
 
@@ -211,6 +211,30 @@ const getDeliveryProgress = (status) => {
     FAILED: 100
   };
   return progress[status] || 0;
+};
+
+const getClientTrackingProgress = (status) => {
+  const progress = {
+    PENDING: 10,
+    WAREHOUSE: 20,
+    LOADED: 40,
+    OUT_FOR_DELIVERY: 75,
+    DELIVERED: 100,
+    FAILED: 100
+  };
+  return progress[status] || 0;
+};
+
+const getClientStatusMessage = (status) => {
+  const messages = {
+    PENDING: 'Awaiting processing',
+    WAREHOUSE: 'Preparing for dispatch',
+    LOADED: 'Preparing for delivery',
+    OUT_FOR_DELIVERY: 'Delivery in progress',
+    DELIVERED: 'Delivered',
+    FAILED: 'Delivery attempt unsuccessful'
+  };
+  return messages[status] || 'Tracking status unavailable';
 };
 
 const formatDateTime = (value) => {
@@ -314,6 +338,12 @@ function App() {
 
   // Tracking search state
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
+  const [clientTracking, setClientTracking] = useState(null);
+  const [clientTrackingLoading, setClientTrackingLoading] = useState(false);
+  const [clientTrackingError, setClientTrackingError] = useState('');
+  const [clientTrackingRefreshError, setClientTrackingRefreshError] = useState('');
+  const [clientTrackingLastRefreshedAt, setClientTrackingLastRefreshedAt] = useState(null);
+  const clientTrackingRefreshInFlightRef = useRef(false);
 
   // Contact Form states
   const [contactName, setContactName] = useState('');
@@ -352,6 +382,10 @@ function App() {
   const [selectedWarehouseTracking, setSelectedWarehouseTracking] = useState(null);
   const [selectedWarehouseTrackingLoading, setSelectedWarehouseTrackingLoading] = useState(false);
   const [selectedWarehouseTrackingError, setSelectedWarehouseTrackingError] = useState('');
+  const [warehouseLoadPackage, setWarehouseLoadPackage] = useState(null);
+  const [warehouseLoadLocation, setWarehouseLoadLocation] = useState('');
+  const [warehouseLoadSubmitting, setWarehouseLoadSubmitting] = useState(false);
+  const [warehouseLoadError, setWarehouseLoadError] = useState('');
   const [driverVerified, setDriverVerified] = useState(() => readSessionValue(DRIVER_VERIFIED_SESSION_KEY) === 'true');
   const [driverId, setDriverId] = useState(() => readSessionValue(DRIVER_ID_SESSION_KEY));
   const [driverLoginId, setDriverLoginId] = useState('');
@@ -774,6 +808,25 @@ function App() {
   }, [dashboardTab, selectedDelivery, user]);
 
   useEffect(() => {
+    if (
+      dashboardTab !== 'tracking'
+      || !user?.token
+      || !clientTracking?.orderNumber
+      || ['DELIVERED', 'FAILED'].includes(clientTracking.status)
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      refreshClientTracking(clientTracking.orderNumber, true);
+    }, 10000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [dashboardTab, clientTracking?.orderNumber, clientTracking?.status, user]);
+
+  useEffect(() => {
     return () => {
       if (podPhotoPreviewUrl) {
         URL.revokeObjectURL(podPhotoPreviewUrl);
@@ -849,6 +902,18 @@ function App() {
     || '';
   const canConfirmPod = Boolean(podPhotoFile && podSignatureDrawn && !deliveryActionLoading);
   const canConfirmFailure = Boolean(failureReason && !deliveryActionLoading);
+  const clientTrackingStatus = clientTracking?.status;
+  const clientTrackingProgress = getClientTrackingProgress(clientTrackingStatus);
+  const clientTrackingHistory = clientTracking?.history || [];
+  const clientTrackingUpdates = [...clientTrackingHistory].reverse();
+  const clientTrackingOrderInfo = orders.find((order) => order.id === clientTracking?.orderNumber) || {};
+  const clientTrackingDestination = clientTrackingOrderInfo.deliveryAddress || clientTrackingOrderInfo.recipientAddress;
+  const clientTrackingMapsHref = clientTrackingDestination
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(clientTrackingDestination)}`
+    : '';
+  const latestTerminalEvent = clientTrackingHistory
+    .filter((entry) => entry.status === clientTrackingStatus)
+    .at(-1);
 
   // Count unread notifications
   const unreadCount = notifications.filter(n => n.unread).length;
@@ -1047,14 +1112,150 @@ function App() {
     }
   };
 
+  const refreshClientTracking = async (orderNumber, background = false) => {
+    if (!user?.token || !orderNumber || clientTrackingRefreshInFlightRef.current) {
+      return;
+    }
+
+    clientTrackingRefreshInFlightRef.current = true;
+    if (!background) {
+      setClientTrackingLoading(true);
+      setClientTrackingError('');
+    }
+    setClientTrackingRefreshError('');
+
+    try {
+      const response = await fetch(`${API_BASE}/api/tracking/${encodeURIComponent(orderNumber)}`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+
+      if (response.status === 404) {
+        throw new Error('NOT_FOUND');
+      }
+
+      if (!response.ok) {
+        throw new Error('REFRESH_FAILED');
+      }
+
+      const data = await response.json();
+      setClientTracking(data);
+      setClientTrackingLastRefreshedAt(new Date());
+    } catch (error) {
+      if (background && clientTracking) {
+        setClientTrackingRefreshError('Unable to refresh tracking right now. Showing the last loaded update.');
+      } else if (error.message === 'NOT_FOUND') {
+        setClientTracking(null);
+        setClientTrackingError('Tracking information was not found for this order number.');
+      } else {
+        setClientTracking(null);
+        setClientTrackingError('Unable to load tracking information. Please try again.');
+      }
+    } finally {
+      clientTrackingRefreshInFlightRef.current = false;
+      if (!background) {
+        setClientTrackingLoading(false);
+      }
+    }
+  };
+
   // Handle search tracking number
-  const handleTrackSubmit = (e) => {
+  const handleTrackSubmit = async (e) => {
     e.preventDefault();
-    const found = orders.find(o => o.id.toLowerCase() === trackingSearchTerm.trim().toLowerCase());
-    if (found) {
-      setActiveTrackingOrder(found);
-    } else {
-      alert(`Order number ${trackingSearchTerm} not found. Try one from the order history list (e.g. ST-902148).`);
+    const orderNumber = trackingSearchTerm.trim();
+    if (!orderNumber) {
+      setClientTrackingError('Please enter an order number.');
+      setClientTracking(null);
+      return;
+    }
+
+    await refreshClientTracking(orderNumber);
+  };
+
+  const resetClientTracking = () => {
+    setClientTracking(null);
+    setClientTrackingError('');
+    setClientTrackingRefreshError('');
+    setClientTrackingLastRefreshedAt(null);
+    setTrackingSearchTerm('');
+  };
+
+  const refreshWarehouseDashboard = async () => {
+    if (!user?.token) {
+      return;
+    }
+
+    const authHeaders = { Authorization: `Bearer ${user.token}` };
+    const [dashboardResponse, wmsStatusResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/tracking/dashboard`, { headers: authHeaders }),
+      fetch(`${API_BASE}/api/wms/status`, { headers: authHeaders })
+    ]);
+
+    if (!dashboardResponse.ok) {
+      throw new Error(`Warehouse dashboard request failed with ${dashboardResponse.status}`);
+    }
+
+    const dashboardData = await dashboardResponse.json();
+    setWarehouseDashboard(dashboardData);
+    setWmsStatus(wmsStatusResponse.ok ? await wmsStatusResponse.json() : { status: 'UNKNOWN' });
+    setSelectedWarehousePackage((current) => {
+      const packages = dashboardData.packages || [];
+      if (!packages.length) {
+        return null;
+      }
+      return packages.find((item) => item.orderNumber === current?.orderNumber) || packages[0];
+    });
+  };
+
+  const openWarehouseLoadPanel = (pkg) => {
+    setWarehouseLoadPackage(pkg);
+    setWarehouseLoadLocation('');
+    setWarehouseLoadError('');
+  };
+
+  const closeWarehouseLoadPanel = () => {
+    setWarehouseLoadPackage(null);
+    setWarehouseLoadLocation('');
+    setWarehouseLoadError('');
+  };
+
+  const handleWarehouseMarkLoaded = async () => {
+    if (!warehouseLoadPackage || warehouseLoadSubmitting) {
+      return;
+    }
+
+    if (!warehouseLoadLocation.trim()) {
+      setWarehouseLoadError('Vehicle / Loading Location is required.');
+      return;
+    }
+
+    setWarehouseLoadSubmitting(true);
+    setWarehouseLoadError('');
+
+    try {
+      const response = await fetch(`${API_BASE}/api/tracking/${warehouseLoadPackage.orderNumber}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${user.token}`
+        },
+        body: JSON.stringify({
+          status: 'LOADED',
+          location: warehouseLoadLocation.trim(),
+          description: 'Package loaded onto delivery vehicle'
+        })
+      });
+
+      const bodyText = await response.text();
+      if (!response.ok) {
+        throw new Error(bodyText || `Unable to mark package as loaded (${response.status})`);
+      }
+
+      closeWarehouseLoadPanel();
+      await refreshWarehouseDashboard();
+    } catch (error) {
+      setWarehouseLoadError(error.message || 'Unable to mark package as loaded.');
+    } finally {
+      setWarehouseLoadSubmitting(false);
     }
   };
 
@@ -2363,6 +2564,7 @@ function App() {
                                 className="order-id-cell"
                                 onClick={() => {
                                   setActiveTrackingOrder(ord);
+                                  setTrackingSearchTerm(ord.id);
                                   setDashboardTab('tracking');
                                 }}
                               >
@@ -2390,6 +2592,7 @@ function App() {
                                   style={{ padding: '6px 12px', fontSize: '12px' }}
                                   onClick={() => {
                                     setActiveTrackingOrder(ord);
+                                    setTrackingSearchTerm(ord.id);
                                     setDashboardTab('tracking');
                                   }}
                                 >
@@ -2462,12 +2665,13 @@ function App() {
                                 <th>Status</th>
                                 <th>Current Location</th>
                                 <th>Updated</th>
+                                <th>Actions</th>
                               </tr>
                             </thead>
                             <tbody>
                               {warehousePackages.length === 0 ? (
                                 <tr>
-                                  <td colSpan="5" className="warehouse-empty-cell">
+                                  <td colSpan="6" className="warehouse-empty-cell">
                                     No packages are stored in tracking yet.
                                   </td>
                                 </tr>
@@ -2487,12 +2691,91 @@ function App() {
                                     </td>
                                     <td>{pkg.currentLocation || 'Not assigned'}</td>
                                     <td>{formatDateTime(pkg.updatedAt)}</td>
+                                    <td>
+                                      {pkg.status === 'WAREHOUSE' ? (
+                                        <button
+                                          type="button"
+                                          className="btn btn-secondary warehouse-load-button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            openWarehouseLoadPanel(pkg);
+                                          }}
+                                        >
+                                          Mark as Loaded
+                                        </button>
+                                      ) : (
+                                        <span className="warehouse-no-action">No action</span>
+                                      )}
+                                    </td>
                                   </tr>
                                 ))
                               )}
                             </tbody>
                           </table>
                         </div>
+
+                        {warehouseLoadPackage && (
+                          <div className="warehouse-load-panel">
+                            <div className="cms-panel-header compact">
+                              <div>
+                                <h3>Mark as Loaded</h3>
+                                <p>Confirm this warehouse package has been loaded onto a delivery vehicle.</p>
+                              </div>
+                            </div>
+
+                            <div className="warehouse-load-summary">
+                              <div>
+                                <span>Order Number</span>
+                                <strong>{warehouseLoadPackage.orderNumber}</strong>
+                              </div>
+                              <div>
+                                <span>Package ID</span>
+                                <strong>{warehouseLoadPackage.packageId}</strong>
+                              </div>
+                              <div>
+                                <span>Current Location</span>
+                                <strong>{warehouseLoadPackage.currentLocation || 'Not assigned'}</strong>
+                              </div>
+                            </div>
+
+                            <div className="order-form-group">
+                              <label htmlFor="warehouse-load-location">Vehicle / Loading Location</label>
+                              <input
+                                id="warehouse-load-location"
+                                type="text"
+                                className="order-input"
+                                placeholder="Enter vehicle, bay, or loading location"
+                                value={warehouseLoadLocation}
+                                onChange={(event) => {
+                                  setWarehouseLoadLocation(event.target.value);
+                                  setWarehouseLoadError('');
+                                }}
+                                disabled={warehouseLoadSubmitting}
+                              />
+                            </div>
+
+                            {warehouseLoadError && <div className="error-message">{warehouseLoadError}</div>}
+
+                            <div className="warehouse-load-actions">
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={closeWarehouseLoadPanel}
+                                disabled={warehouseLoadSubmitting}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={handleWarehouseMarkLoaded}
+                                disabled={warehouseLoadSubmitting || !warehouseLoadLocation.trim()}
+                              >
+                                {warehouseLoadSubmitting ? 'Marking Loaded...' : 'Confirm Loaded'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div className="card cms-panel">
@@ -2982,6 +3265,210 @@ function App() {
 
             {/* TAB 4: LIVE ORDER TRACKING */}
             {dashboardTab === 'tracking' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">Shipment Tracking</h1>
+                    <p className="screen-subtitle">Search by order number and follow real package status from the Tracking Service</p>
+                  </div>
+                  {clientTracking && (
+                    <button className="btn btn-secondary" onClick={resetClientTracking}>
+                      Track Another Shipment
+                    </button>
+                  )}
+                </header>
+
+                <div className="card client-tracking-search-card">
+                  <form onSubmit={handleTrackSubmit} className="client-tracking-search-form">
+                    <input
+                      type="text"
+                      className="order-input"
+                      placeholder="Enter order number, e.g. SL-12345678"
+                      value={trackingSearchTerm}
+                      onChange={(e) => setTrackingSearchTerm(e.target.value)}
+                    />
+                    <button type="submit" className="btn btn-primary" disabled={clientTrackingLoading}>
+                      {clientTrackingLoading ? 'Searching...' : 'Track Shipment'}
+                    </button>
+                  </form>
+                </div>
+
+                {clientTrackingLoading && (
+                  <div className="card client-tracking-state">Loading tracking information...</div>
+                )}
+                {clientTrackingError && (
+                  <div className="card client-tracking-state error">{clientTrackingError}</div>
+                )}
+
+                {!clientTracking && !clientTrackingLoading && !clientTrackingError && (
+                  <div className="card client-tracking-empty">
+                    <TrackingIcon />
+                    <h3>Track a shipment</h3>
+                    <p>Enter an order number to load its current package status and real tracking history.</p>
+                  </div>
+                )}
+
+                {clientTracking && (
+                  <div className="client-tracking-dashboard">
+                    <div className={`card client-tracking-hero ${clientTrackingStatus === 'FAILED' ? 'failed' : ''}`}>
+                      <div className="client-tracking-hero-main">
+                        <div>
+                          <span className="cms-preview-label">Current Package</span>
+                          <h2>{clientTracking.packageId}</h2>
+                          <p>{clientTracking.orderNumber}</p>
+                        </div>
+                        <span className={`badge ${getWarehouseStatusBadge(clientTrackingStatus)}`}>
+                          {toWarehouseStatusLabel(clientTrackingStatus)}
+                        </span>
+                      </div>
+                      <div className={`client-progress-bar ${clientTrackingStatus === 'FAILED' ? 'failed' : ''}`}>
+                        <div style={{ width: `${clientTrackingProgress}%` }}></div>
+                      </div>
+                      <div className="client-progress-meta">
+                        <span>{clientTrackingProgress}% progress</span>
+                        <span>{getClientStatusMessage(clientTrackingStatus)}</span>
+                      </div>
+                      <div className="client-refresh-row">
+                        <span>{['DELIVERED', 'FAILED'].includes(clientTrackingStatus) ? 'Tracking complete' : 'Tracking active'}</span>
+                        <span>Last refreshed: {formatDateTime(clientTrackingLastRefreshedAt)}</span>
+                      </div>
+                      {clientTrackingRefreshError && (
+                        <div className="client-refresh-error">{clientTrackingRefreshError}</div>
+                      )}
+                    </div>
+
+                    {clientTrackingStatus === 'DELIVERED' && (
+                      <div className="card client-terminal-card completed">
+                        <h3>Delivered</h3>
+                        <p>{latestTerminalEvent?.description || 'Package delivered successfully'}</p>
+                        <span>{formatDateTime(latestTerminalEvent?.eventTime || clientTracking.updatedAt)}</span>
+                      </div>
+                    )}
+
+                    {clientTrackingStatus === 'FAILED' && (
+                      <div className="card client-terminal-card failed">
+                        <h3>Delivery Attempt Failed</h3>
+                        <p>{latestTerminalEvent?.description || 'Delivery attempt unsuccessful'}</p>
+                        <span>{formatDateTime(latestTerminalEvent?.eventTime || clientTracking.updatedAt)}</span>
+                      </div>
+                    )}
+
+                    <div className="client-tracking-grid">
+                      <div className="client-tracking-main-column">
+                        <div className="card client-progress-steps-card">
+                          <div className="cms-panel-header compact">
+                            <div>
+                              <h3>Delivery Progress</h3>
+                              <p>Completed steps reflect real tracking history; upcoming steps are expected future states.</p>
+                            </div>
+                          </div>
+                          <div className="client-progress-steps">
+                            {[
+                              { status: 'PENDING', label: 'Order Received / Pending' },
+                              { status: 'WAREHOUSE', label: 'Warehouse' },
+                              { status: 'LOADED', label: 'Loaded' },
+                              { status: 'OUT_FOR_DELIVERY', label: 'Out for Delivery' },
+                              { status: 'DELIVERED', label: 'Delivered' }
+                            ].map((step) => {
+                              const historyEntry = clientTrackingHistory.find((entry) => entry.status === step.status);
+                              const isCurrent = clientTrackingStatus === step.status;
+                              const isCompleted = Boolean(historyEntry) || (step.status === 'DELIVERED' && clientTrackingStatus === 'DELIVERED');
+                              return (
+                                <div className={`client-progress-step ${isCompleted ? 'completed' : ''} ${isCurrent ? 'current' : ''}`} key={step.status}>
+                                  <span className="client-progress-step-dot"></span>
+                                  <div>
+                                    <strong>{step.label}</strong>
+                                    {historyEntry ? (
+                                      <p>{historyEntry.description || toWarehouseStatusLabel(historyEntry.status)} - {formatDateTime(historyEntry.eventTime)}</p>
+                                    ) : (
+                                      <p>Expected step</p>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="card client-timeline-card">
+                          <div className="cms-panel-header compact">
+                            <div>
+                              <h3>Tracking Timeline</h3>
+                              <p>Real tracking history from the Tracking Service</p>
+                            </div>
+                          </div>
+                          {clientTrackingHistory.length ? (
+                            <div className="warehouse-timeline">
+                              {clientTrackingHistory.map((item) => (
+                                <div className="warehouse-timeline-item" key={`${item.status}-${item.eventTime}`}>
+                                  <span className={`warehouse-timeline-dot ${item.status === 'FAILED' ? 'failed' : ''}`}></span>
+                                  <div>
+                                    <div className="warehouse-timeline-title">{toWarehouseStatusLabel(item.status)}</div>
+                                    <div className="warehouse-timeline-meta">{item.location || 'No location'} - {formatDateTime(item.eventTime)}</div>
+                                    <p>{item.description || 'No description provided'}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="warehouse-empty-state">No tracking history has been recorded yet.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="client-tracking-side-column">
+                        <div className="card client-location-card">
+                          <div className="cms-preview-label">Last Known Location</div>
+                          <h3>{clientTracking.currentLocation || 'Not available'}</h3>
+                          <p>Exact GPS coordinates are not available from the current tracking backend.</p>
+                          <div className="driver-map-placeholder client-map-placeholder">
+                            <div className="driver-map-node">{clientTracking.currentLocation || 'Latest location unavailable'}</div>
+                            <div className="driver-map-path"></div>
+                            <div className="driver-map-node destination">{clientTrackingDestination || 'Destination not available'}</div>
+                          </div>
+                          {clientTrackingMapsHref ? (
+                            <a href={clientTrackingMapsHref} target="_blank" rel="noreferrer" className="btn btn-secondary driver-wide-button">
+                              Open Destination in Maps
+                            </a>
+                          ) : (
+                            <button className="btn btn-secondary driver-wide-button" disabled>Open Destination in Maps</button>
+                          )}
+                        </div>
+
+                        <div className="card client-eta-card">
+                          <div className="cms-preview-label">Delivery Status</div>
+                          <h3>{getClientStatusMessage(clientTrackingStatus)}</h3>
+                          <p>Live ETA unavailable</p>
+                          <span>Updated: {formatDateTime(clientTracking.updatedAt)}</span>
+                        </div>
+
+                        <div className="card client-updates-card">
+                          <div className="cms-preview-label">Tracking Updates</div>
+                          {clientTrackingUpdates.length ? (
+                            <div className="client-updates-list">
+                              {clientTrackingUpdates.map((entry) => (
+                                <div className="client-update-row" key={`${entry.status}-${entry.eventTime}`}>
+                                  <span className={`badge ${getWarehouseStatusBadge(entry.status)}`}>{toWarehouseStatusLabel(entry.status)}</span>
+                                  <div>
+                                    <strong>{entry.description || toWarehouseStatusLabel(entry.status)}</strong>
+                                    <p>{formatDateTime(entry.eventTime)}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="warehouse-empty-state">No updates yet.</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Legacy static tracking view kept disabled after Phase 11 real tracking integration. */}
+            {false && dashboardTab === 'tracking' && (
               <div>
                 <header className="screen-header">
                   <div>
