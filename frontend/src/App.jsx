@@ -2717,64 +2717,66 @@ function App() {
                         </div>
 
                         {warehouseLoadPackage && (
-                          <div className="warehouse-load-panel">
-                            <div className="cms-panel-header compact">
-                              <div>
-                                <h3>Mark as Loaded</h3>
-                                <p>Confirm this warehouse package has been loaded onto a delivery vehicle.</p>
+                          <div className="modal-overlay warehouse-load-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="warehouse-load-title">
+                            <div className="warehouse-load-panel">
+                              <div className="cms-panel-header compact">
+                                <div>
+                                  <h3 id="warehouse-load-title">Mark as Loaded</h3>
+                                  <p>Confirm this warehouse package has been loaded onto a delivery vehicle.</p>
+                                </div>
                               </div>
-                            </div>
 
-                            <div className="warehouse-load-summary">
-                              <div>
-                                <span>Order Number</span>
-                                <strong>{warehouseLoadPackage.orderNumber}</strong>
+                              <div className="warehouse-load-summary">
+                                <div>
+                                  <span>Order Number</span>
+                                  <strong>{warehouseLoadPackage.orderNumber}</strong>
+                                </div>
+                                <div>
+                                  <span>Package ID</span>
+                                  <strong>{warehouseLoadPackage.packageId}</strong>
+                                </div>
+                                <div>
+                                  <span>Current Location</span>
+                                  <strong>{warehouseLoadPackage.currentLocation || 'Not assigned'}</strong>
+                                </div>
                               </div>
-                              <div>
-                                <span>Package ID</span>
-                                <strong>{warehouseLoadPackage.packageId}</strong>
+
+                              <div className="order-form-group">
+                                <label htmlFor="warehouse-load-location">Vehicle / Loading Location</label>
+                                <input
+                                  id="warehouse-load-location"
+                                  type="text"
+                                  className="order-input"
+                                  placeholder="Enter vehicle, bay, or loading location"
+                                  value={warehouseLoadLocation}
+                                  onChange={(event) => {
+                                    setWarehouseLoadLocation(event.target.value);
+                                    setWarehouseLoadError('');
+                                  }}
+                                  disabled={warehouseLoadSubmitting}
+                                />
                               </div>
-                              <div>
-                                <span>Current Location</span>
-                                <strong>{warehouseLoadPackage.currentLocation || 'Not assigned'}</strong>
+
+                              {warehouseLoadError && <div className="error-message">{warehouseLoadError}</div>}
+
+                              <div className="warehouse-load-actions">
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  onClick={closeWarehouseLoadPanel}
+                                  disabled={warehouseLoadSubmitting}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  onClick={handleWarehouseMarkLoaded}
+                                  disabled={warehouseLoadSubmitting || !warehouseLoadLocation.trim()}
+                                >
+                                  {warehouseLoadSubmitting ? 'Marking Loaded...' : 'Confirm Loaded'}
+                                </button>
                               </div>
-                            </div>
-
-                            <div className="order-form-group">
-                              <label htmlFor="warehouse-load-location">Vehicle / Loading Location</label>
-                              <input
-                                id="warehouse-load-location"
-                                type="text"
-                                className="order-input"
-                                placeholder="Enter vehicle, bay, or loading location"
-                                value={warehouseLoadLocation}
-                                onChange={(event) => {
-                                  setWarehouseLoadLocation(event.target.value);
-                                  setWarehouseLoadError('');
-                                }}
-                                disabled={warehouseLoadSubmitting}
-                              />
-                            </div>
-
-                            {warehouseLoadError && <div className="error-message">{warehouseLoadError}</div>}
-
-                            <div className="warehouse-load-actions">
-                              <button
-                                type="button"
-                                className="btn btn-secondary"
-                                onClick={closeWarehouseLoadPanel}
-                                disabled={warehouseLoadSubmitting}
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-primary"
-                                onClick={handleWarehouseMarkLoaded}
-                                disabled={warehouseLoadSubmitting || !warehouseLoadLocation.trim()}
-                              >
-                                {warehouseLoadSubmitting ? 'Marking Loaded...' : 'Confirm Loaded'}
-                              </button>
                             </div>
                           </div>
                         )}
