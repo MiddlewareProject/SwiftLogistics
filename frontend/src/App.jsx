@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 
 const API_BASE = 'http://localhost:8080';
@@ -673,7 +673,6 @@ function App() {
 
   useEffect(() => {
     if (dashboardTab !== 'warehouse' || !user?.token || !selectedWarehousePackage?.orderNumber) {
-      setSelectedWarehouseTracking(null);
       return;
     }
 
@@ -807,6 +806,52 @@ function App() {
     };
   }, [dashboardTab, selectedDelivery, user]);
 
+  const refreshClientTracking = useCallback(async (orderNumber, background = false) => {
+    if (!user?.token || !orderNumber || clientTrackingRefreshInFlightRef.current) {
+      return;
+    }
+
+    clientTrackingRefreshInFlightRef.current = true;
+    if (!background) {
+      setClientTrackingLoading(true);
+      setClientTrackingError('');
+    }
+    setClientTrackingRefreshError('');
+
+    try {
+      const response = await fetch(`${API_BASE}/api/tracking/${encodeURIComponent(orderNumber)}`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+
+      if (response.status === 404) {
+        throw new Error('NOT_FOUND');
+      }
+
+      if (!response.ok) {
+        throw new Error('REFRESH_FAILED');
+      }
+
+      const data = await response.json();
+      setClientTracking(data);
+      setClientTrackingLastRefreshedAt(new Date());
+    } catch (error) {
+      if (background && clientTracking) {
+        setClientTrackingRefreshError('Unable to refresh tracking right now. Showing the last loaded update.');
+      } else if (error.message === 'NOT_FOUND') {
+        setClientTracking(null);
+        setClientTrackingError('Tracking information was not found for this order number.');
+      } else {
+        setClientTracking(null);
+        setClientTrackingError('Unable to load tracking information. Please try again.');
+      }
+    } finally {
+      clientTrackingRefreshInFlightRef.current = false;
+      if (!background) {
+        setClientTrackingLoading(false);
+      }
+    }
+  }, [clientTracking, user]);
+
   useEffect(() => {
     if (
       dashboardTab !== 'tracking'
@@ -824,7 +869,7 @@ function App() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [dashboardTab, clientTracking?.orderNumber, clientTracking?.status, user]);
+  }, [dashboardTab, clientTracking?.orderNumber, clientTracking?.status, refreshClientTracking, user]);
 
   useEffect(() => {
     return () => {
@@ -876,6 +921,9 @@ function App() {
   const warehousePackages = warehouseDashboard?.packages || [];
   const warehouseRecentActivity = warehouseDashboard?.recentActivity || [];
   const warehouseAvailableCapacity = Math.max(0, (warehouseCapacity.total ?? 0) - (warehouseCapacity.used ?? 0));
+  const selectedWarehouseTrackingForPackage = selectedWarehousePackage?.orderNumber === selectedWarehouseTracking?.orderNumber
+    ? selectedWarehouseTracking
+    : null;
   const wmsStatusValue = wmsStatus?.status || 'UNKNOWN';
   const wmsStatusBadge = wmsStatusValue === 'ONLINE'
     ? 'badge-completed'
@@ -1109,52 +1157,6 @@ function App() {
       setOrderSubmitError(error.message || 'Unable to create order. Please try again.');
     } finally {
       setOrderSubmitting(false);
-    }
-  };
-
-  const refreshClientTracking = async (orderNumber, background = false) => {
-    if (!user?.token || !orderNumber || clientTrackingRefreshInFlightRef.current) {
-      return;
-    }
-
-    clientTrackingRefreshInFlightRef.current = true;
-    if (!background) {
-      setClientTrackingLoading(true);
-      setClientTrackingError('');
-    }
-    setClientTrackingRefreshError('');
-
-    try {
-      const response = await fetch(`${API_BASE}/api/tracking/${encodeURIComponent(orderNumber)}`, {
-        headers: { Authorization: `Bearer ${user.token}` }
-      });
-
-      if (response.status === 404) {
-        throw new Error('NOT_FOUND');
-      }
-
-      if (!response.ok) {
-        throw new Error('REFRESH_FAILED');
-      }
-
-      const data = await response.json();
-      setClientTracking(data);
-      setClientTrackingLastRefreshedAt(new Date());
-    } catch (error) {
-      if (background && clientTracking) {
-        setClientTrackingRefreshError('Unable to refresh tracking right now. Showing the last loaded update.');
-      } else if (error.message === 'NOT_FOUND') {
-        setClientTracking(null);
-        setClientTrackingError('Tracking information was not found for this order number.');
-      } else {
-        setClientTracking(null);
-        setClientTrackingError('Unable to load tracking information. Please try again.');
-      }
-    } finally {
-      clientTrackingRefreshInFlightRef.current = false;
-      if (!background) {
-        setClientTrackingLoading(false);
-      }
     }
   };
 
@@ -2790,9 +2792,9 @@ function App() {
                           <div className="warehouse-empty-state">Loading tracking history...</div>
                         ) : selectedWarehouseTrackingError ? (
                           <div className="error-message">{selectedWarehouseTrackingError}</div>
-                        ) : selectedWarehouseTracking?.history?.length ? (
+                        ) : selectedWarehouseTrackingForPackage?.history?.length ? (
                           <div className="warehouse-timeline">
-                            {selectedWarehouseTracking.history.map((item) => (
+                            {selectedWarehouseTrackingForPackage.history.map((item) => (
                               <div className="warehouse-timeline-item" key={`${item.status}-${item.eventTime}`}>
                                 <span className={`warehouse-timeline-dot ${item.status === 'FAILED' ? 'failed' : ''}`}></span>
                                 <div>
@@ -3468,7 +3470,7 @@ function App() {
             )}
 
             {/* Legacy static tracking view kept disabled after Phase 11 real tracking integration. */}
-            {false && dashboardTab === 'tracking' && (
+            {dashboardTab === 'tracking-legacy' && (
               <div>
                 <header className="screen-header">
                   <div>
