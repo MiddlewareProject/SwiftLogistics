@@ -35,7 +35,19 @@ public class GatewayConfig {
         .before(uri(URI.create("http://ros-adapter:8084")))
         .build();
 
-    return orderRoutes.andOther(cmsRoutes).andOther(rosRoutes);
+    RouterFunction<ServerResponse> trackingRoutes = route("tracking-service-route")
+        .route(RequestPredicates.path("/api/tracking/**"), http())
+        .filter(jwtAuthenticationFilter)
+        .before(uri(URI.create("http://tracking-service:8082")))
+        .build();
+
+    RouterFunction<ServerResponse> wmsRoutes = route("wms-adapter-route")
+        .route(RequestPredicates.path("/api/wms/**"), http())
+        .filter(jwtAuthenticationFilter)
+        .before(uri(URI.create("http://wms-adapter:8085")))
+        .build();
+
+    return orderRoutes.andOther(cmsRoutes).andOther(rosRoutes).andOther(trackingRoutes).andOther(wmsRoutes);
     }
 
     @Bean

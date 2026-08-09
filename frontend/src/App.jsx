@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 
 const API_BASE = 'http://localhost:8080';
@@ -6,6 +6,8 @@ const AUTH_USER_STORAGE_KEY = 'swifttrack-auth-user';
 const REGISTERED_ACCOUNTS_STORAGE_KEY = 'swifttrack-registered-accounts';
 const DASHBOARD_SCREEN_STORAGE_KEY = 'swifttrack-current-screen';
 const DASHBOARD_TAB_STORAGE_KEY = 'swifttrack-dashboard-tab';
+const DRIVER_VERIFIED_SESSION_KEY = 'swifttrack_driver_verified';
+const DRIVER_ID_SESSION_KEY = 'swifttrack_driver_id';
 
 const readStoredValue = (key, fallback) => {
   if (typeof window === 'undefined') {
@@ -30,6 +32,30 @@ const writeStoredValue = (key, value) => {
   }
 
   window.localStorage.setItem(key, JSON.stringify(value));
+};
+
+const readSessionValue = (key, fallback = '') => {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  return window.sessionStorage.getItem(key) || fallback;
+};
+
+const writeSessionValue = (key, value) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.sessionStorage.setItem(key, value);
+};
+
+const removeSessionValue = (key) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.sessionStorage.removeItem(key);
 };
 
 const seedRegisteredAccounts = [
@@ -157,6 +183,71 @@ const toDisplayStatus = (status) => {
   return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
 };
 
+const toWarehouseStatusLabel = (status) => {
+  const labels = {
+    WAREHOUSE: 'Warehouse',
+    LOADED: 'Loaded',
+    OUT_FOR_DELIVERY: 'Out for Delivery',
+    DELIVERED: 'Delivered',
+    FAILED: 'Failed',
+    PENDING: 'Pending'
+  };
+  return labels[status] || toDisplayStatus(status);
+};
+
+const getWarehouseStatusBadge = (status) => {
+  if (status === 'DELIVERED') return 'badge-completed';
+  if (status === 'FAILED') return 'badge-failed';
+  if (status === 'PENDING' || status === 'WAREHOUSE') return 'badge-pending';
+  return 'badge-transit';
+};
+
+const getDeliveryProgress = (status) => {
+  const progress = {
+    WAREHOUSE: 20,
+    LOADED: 40,
+    OUT_FOR_DELIVERY: 75,
+    DELIVERED: 100,
+    FAILED: 100
+  };
+  return progress[status] || 0;
+};
+
+const getClientTrackingProgress = (status) => {
+  const progress = {
+    PENDING: 10,
+    WAREHOUSE: 20,
+    LOADED: 40,
+    OUT_FOR_DELIVERY: 75,
+    DELIVERED: 100,
+    FAILED: 100
+  };
+  return progress[status] || 0;
+};
+
+const getClientStatusMessage = (status) => {
+  const messages = {
+    PENDING: 'Awaiting processing',
+    WAREHOUSE: 'Preparing for dispatch',
+    LOADED: 'Preparing for delivery',
+    OUT_FOR_DELIVERY: 'Delivery in progress',
+    DELIVERED: 'Delivered',
+    FAILED: 'Delivery attempt unsuccessful'
+  };
+  return messages[status] || 'Tracking status unavailable';
+};
+
+const formatDateTime = (value) => {
+  if (!value) return 'Not available';
+  return new Date(value).toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
 const getStoredUser = () => {
   const storedUser = readStoredValue(AUTH_USER_STORAGE_KEY, null);
   return storedUser && storedUser.token ? storedUser : null;
@@ -247,6 +338,12 @@ function App() {
 
   // Tracking search state
   const [trackingSearchTerm, setTrackingSearchTerm] = useState('');
+  const [clientTracking, setClientTracking] = useState(null);
+  const [clientTrackingLoading, setClientTrackingLoading] = useState(false);
+  const [clientTrackingError, setClientTrackingError] = useState('');
+  const [clientTrackingRefreshError, setClientTrackingRefreshError] = useState('');
+  const [clientTrackingLastRefreshedAt, setClientTrackingLastRefreshedAt] = useState(null);
+  const clientTrackingRefreshInFlightRef = useRef(false);
 
   // Contact Form states
   const [contactName, setContactName] = useState('');
@@ -277,6 +374,45 @@ function App() {
   const [rosLatestRoute, setRosLatestRoute] = useState(null);
   const [rosLoading, setRosLoading] = useState(false);
   const [rosError, setRosError] = useState('');
+  const [warehouseDashboard, setWarehouseDashboard] = useState(null);
+  const [warehouseLoading, setWarehouseLoading] = useState(false);
+  const [warehouseError, setWarehouseError] = useState('');
+  const [wmsStatus, setWmsStatus] = useState(null);
+  const [selectedWarehousePackage, setSelectedWarehousePackage] = useState(null);
+  const [selectedWarehouseTracking, setSelectedWarehouseTracking] = useState(null);
+  const [selectedWarehouseTrackingLoading, setSelectedWarehouseTrackingLoading] = useState(false);
+  const [selectedWarehouseTrackingError, setSelectedWarehouseTrackingError] = useState('');
+  const [warehouseLoadPackage, setWarehouseLoadPackage] = useState(null);
+  const [warehouseLoadLocation, setWarehouseLoadLocation] = useState('');
+  const [warehouseLoadSubmitting, setWarehouseLoadSubmitting] = useState(false);
+  const [warehouseLoadError, setWarehouseLoadError] = useState('');
+  const [driverVerified, setDriverVerified] = useState(() => readSessionValue(DRIVER_VERIFIED_SESSION_KEY) === 'true');
+  const [driverId, setDriverId] = useState(() => readSessionValue(DRIVER_ID_SESSION_KEY));
+  const [driverLoginId, setDriverLoginId] = useState('');
+  const [driverPassword, setDriverPassword] = useState('');
+  const [driverLoginError, setDriverLoginError] = useState('');
+  const [driverDashboard, setDriverDashboard] = useState(null);
+  const [driverLoading, setDriverLoading] = useState(false);
+  const [driverError, setDriverError] = useState('');
+  const [selectedDelivery, setSelectedDelivery] = useState(null);
+  const [selectedDeliveryTracking, setSelectedDeliveryTracking] = useState(null);
+  const [selectedDeliveryOrder, setSelectedDeliveryOrder] = useState(null);
+  const [selectedDeliveryLoading, setSelectedDeliveryLoading] = useState(false);
+  const [selectedDeliveryError, setSelectedDeliveryError] = useState('');
+  const [deliveryActionLoading, setDeliveryActionLoading] = useState('');
+  const [deliveryActionError, setDeliveryActionError] = useState('');
+  const [podOpen, setPodOpen] = useState(false);
+  const [podPhotoFile, setPodPhotoFile] = useState(null);
+  const [podPhotoPreviewUrl, setPodPhotoPreviewUrl] = useState('');
+  const [podNote, setPodNote] = useState('');
+  const [podSignatureDrawn, setPodSignatureDrawn] = useState(false);
+  const [podValidationError, setPodValidationError] = useState('');
+  const [failureOpen, setFailureOpen] = useState(false);
+  const [failureReason, setFailureReason] = useState('');
+  const [failureNote, setFailureNote] = useState('');
+  const [failureValidationError, setFailureValidationError] = useState('');
+  const signatureCanvasRef = useRef(null);
+  const signatureDrawingRef = useRef(false);
 
   useEffect(() => {
     writeStoredValue(DASHBOARD_SCREEN_STORAGE_KEY, currentScreen);
@@ -474,6 +610,275 @@ function App() {
     };
   }, [dashboardTab, user]);
 
+  useEffect(() => {
+    if (dashboardTab !== 'warehouse' || !user?.token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadWarehouseDashboard = async () => {
+      setWarehouseLoading(true);
+      setWarehouseError('');
+
+      try {
+        const authHeaders = { Authorization: `Bearer ${user.token}` };
+        const [dashboardResponse, wmsStatusResponse] = await Promise.all([
+          fetch(`${API_BASE}/api/tracking/dashboard`, { headers: authHeaders }),
+          fetch(`${API_BASE}/api/wms/status`, { headers: authHeaders })
+        ]);
+
+        if (!dashboardResponse.ok) {
+          throw new Error(`Warehouse dashboard request failed with ${dashboardResponse.status}`);
+        }
+
+        const dashboardData = await dashboardResponse.json();
+        const statusData = wmsStatusResponse.ok
+          ? await wmsStatusResponse.json()
+          : { status: 'UNKNOWN' };
+
+        if (cancelled) {
+          return;
+        }
+
+        setWarehouseDashboard(dashboardData);
+        setWmsStatus(statusData);
+        setSelectedWarehousePackage((current) => {
+          const packages = dashboardData.packages || [];
+          if (!packages.length) {
+            return null;
+          }
+          return packages.find((item) => item.orderNumber === current?.orderNumber) || packages[0];
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setWarehouseError(error.message || 'Unable to load warehouse dashboard');
+          setWarehouseDashboard(null);
+          setWmsStatus({ status: 'UNKNOWN' });
+          setSelectedWarehousePackage(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setWarehouseLoading(false);
+        }
+      }
+    };
+
+    loadWarehouseDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, user]);
+
+  useEffect(() => {
+    if (dashboardTab !== 'warehouse' || !user?.token || !selectedWarehousePackage?.orderNumber) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadPackageTracking = async () => {
+      setSelectedWarehouseTrackingLoading(true);
+      setSelectedWarehouseTrackingError('');
+
+      try {
+        const response = await fetch(`${API_BASE}/api/tracking/${selectedWarehousePackage.orderNumber}`, {
+          headers: { Authorization: `Bearer ${user.token}` }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Tracking request failed with ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          setSelectedWarehouseTracking(data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSelectedWarehouseTracking(null);
+          setSelectedWarehouseTrackingError(error.message || 'Unable to load package tracking history');
+        }
+      } finally {
+        if (!cancelled) {
+          setSelectedWarehouseTrackingLoading(false);
+        }
+      }
+    };
+
+    loadPackageTracking();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, selectedWarehousePackage, user]);
+
+  useEffect(() => {
+    if (dashboardTab !== 'driver' || !driverVerified || !user?.token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadDriverDashboard = async () => {
+      setDriverLoading(true);
+      setDriverError('');
+
+      try {
+        const response = await fetch(`${API_BASE}/api/tracking/dashboard`, {
+          headers: { Authorization: `Bearer ${user.token}` }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Driver manifest request failed with ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          setDriverDashboard(data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setDriverDashboard(null);
+          setDriverError(error.message || 'Unable to load driver manifest');
+        }
+      } finally {
+        if (!cancelled) {
+          setDriverLoading(false);
+        }
+      }
+    };
+
+    loadDriverDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, driverVerified, user]);
+
+  useEffect(() => {
+    if (dashboardTab !== 'driver' || !user?.token || !selectedDelivery?.orderNumber) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadDeliveryDetails = async () => {
+      setSelectedDeliveryLoading(true);
+      setSelectedDeliveryError('');
+      setSelectedDeliveryTracking(null);
+      setSelectedDeliveryOrder(null);
+
+      try {
+        const authHeaders = { Authorization: `Bearer ${user.token}` };
+        const [trackingResponse, orderResponse] = await Promise.all([
+          fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}`, { headers: authHeaders }),
+          fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders })
+        ]);
+
+        if (!trackingResponse.ok) {
+          throw new Error(`Tracking detail request failed with ${trackingResponse.status}`);
+        }
+
+        const trackingData = await trackingResponse.json();
+        const orderData = orderResponse.ok ? await orderResponse.json() : null;
+
+        if (!cancelled) {
+          setSelectedDeliveryTracking(trackingData);
+          setSelectedDeliveryOrder(orderData);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSelectedDeliveryError(error.message || 'Unable to load delivery details');
+        }
+      } finally {
+        if (!cancelled) {
+          setSelectedDeliveryLoading(false);
+        }
+      }
+    };
+
+    loadDeliveryDetails();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, selectedDelivery, user]);
+
+  const refreshClientTracking = useCallback(async (orderNumber, background = false) => {
+    if (!user?.token || !orderNumber || clientTrackingRefreshInFlightRef.current) {
+      return;
+    }
+
+    clientTrackingRefreshInFlightRef.current = true;
+    if (!background) {
+      setClientTrackingLoading(true);
+      setClientTrackingError('');
+    }
+    setClientTrackingRefreshError('');
+
+    try {
+      const response = await fetch(`${API_BASE}/api/tracking/${encodeURIComponent(orderNumber)}`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+
+      if (response.status === 404) {
+        throw new Error('NOT_FOUND');
+      }
+
+      if (!response.ok) {
+        throw new Error('REFRESH_FAILED');
+      }
+
+      const data = await response.json();
+      setClientTracking(data);
+      setClientTrackingLastRefreshedAt(new Date());
+    } catch (error) {
+      if (background && clientTracking) {
+        setClientTrackingRefreshError('Unable to refresh tracking right now. Showing the last loaded update.');
+      } else if (error.message === 'NOT_FOUND') {
+        setClientTracking(null);
+        setClientTrackingError('Tracking information was not found for this order number.');
+      } else {
+        setClientTracking(null);
+        setClientTrackingError('Unable to load tracking information. Please try again.');
+      }
+    } finally {
+      clientTrackingRefreshInFlightRef.current = false;
+      if (!background) {
+        setClientTrackingLoading(false);
+      }
+    }
+  }, [clientTracking, user]);
+
+  useEffect(() => {
+    if (
+      dashboardTab !== 'tracking'
+      || !user?.token
+      || !clientTracking?.orderNumber
+      || ['DELIVERED', 'FAILED'].includes(clientTracking.status)
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      refreshClientTracking(clientTracking.orderNumber, true);
+    }, 10000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [dashboardTab, clientTracking?.orderNumber, clientTracking?.status, refreshClientTracking, user]);
+
+  useEffect(() => {
+    return () => {
+      if (podPhotoPreviewUrl) {
+        URL.revokeObjectURL(podPhotoPreviewUrl);
+      }
+    };
+  }, [podPhotoPreviewUrl]);
+
   const rosSummaryMetrics = rosDashboard
     ? [
         { label: 'Routes Generated', value: String(rosDashboard.routesGenerated), tone: 'primary' },
@@ -511,6 +916,52 @@ function App() {
     : [];
 
   const cmsConnected = cmsDashboard?.connected ?? false;
+  const warehouseStats = warehouseDashboard?.stats || {};
+  const warehouseCapacity = warehouseDashboard?.capacity || {};
+  const warehousePackages = warehouseDashboard?.packages || [];
+  const warehouseRecentActivity = warehouseDashboard?.recentActivity || [];
+  const warehouseAvailableCapacity = Math.max(0, (warehouseCapacity.total ?? 0) - (warehouseCapacity.used ?? 0));
+  const selectedWarehouseTrackingForPackage = selectedWarehousePackage?.orderNumber === selectedWarehouseTracking?.orderNumber
+    ? selectedWarehouseTracking
+    : null;
+  const wmsStatusValue = wmsStatus?.status || 'UNKNOWN';
+  const wmsStatusBadge = wmsStatusValue === 'ONLINE'
+    ? 'badge-completed'
+    : wmsStatusValue === 'OFFLINE'
+      ? 'badge-failed'
+      : 'badge-pending';
+  const driverPackages = (driverDashboard?.packages || []).filter((pkg) =>
+    ['LOADED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'].includes(pkg.status)
+  );
+  const driverStats = {
+    todaysDeliveries: driverPackages.length,
+    remaining: driverPackages.filter((pkg) => pkg.status === 'LOADED' || pkg.status === 'OUT_FOR_DELIVERY').length,
+    inProgress: driverPackages.filter((pkg) => pkg.status === 'OUT_FOR_DELIVERY').length,
+    completed: driverPackages.filter((pkg) => pkg.status === 'DELIVERED' || pkg.status === 'FAILED').length
+  };
+  const selectedOrderInfo = selectedDeliveryOrder || orders.find((order) => order.id === selectedDelivery?.orderNumber) || {};
+  const currentDeliveryStatus = selectedDeliveryTracking?.status || selectedDelivery?.status;
+  const deliveryProgress = getDeliveryProgress(currentDeliveryStatus);
+  const mapAddress = selectedOrderInfo.recipientAddress || selectedOrderInfo.deliveryAddress;
+  const mapsHref = mapAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapAddress)}` : '';
+  const bestDeliveryLocation = mapAddress
+    || selectedDeliveryTracking?.currentLocation
+    || selectedDelivery?.currentLocation
+    || '';
+  const canConfirmPod = Boolean(podPhotoFile && podSignatureDrawn && !deliveryActionLoading);
+  const canConfirmFailure = Boolean(failureReason && !deliveryActionLoading);
+  const clientTrackingStatus = clientTracking?.status;
+  const clientTrackingProgress = getClientTrackingProgress(clientTrackingStatus);
+  const clientTrackingHistory = clientTracking?.history || [];
+  const clientTrackingUpdates = [...clientTrackingHistory].reverse();
+  const clientTrackingOrderInfo = orders.find((order) => order.id === clientTracking?.orderNumber) || {};
+  const clientTrackingDestination = clientTrackingOrderInfo.deliveryAddress || clientTrackingOrderInfo.recipientAddress;
+  const clientTrackingMapsHref = clientTrackingDestination
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(clientTrackingDestination)}`
+    : '';
+  const latestTerminalEvent = clientTrackingHistory
+    .filter((entry) => entry.status === clientTrackingStatus)
+    .at(-1);
 
   // Count unread notifications
   const unreadCount = notifications.filter(n => n.unread).length;
@@ -710,13 +1161,355 @@ function App() {
   };
 
   // Handle search tracking number
-  const handleTrackSubmit = (e) => {
+  const handleTrackSubmit = async (e) => {
     e.preventDefault();
-    const found = orders.find(o => o.id.toLowerCase() === trackingSearchTerm.trim().toLowerCase());
-    if (found) {
-      setActiveTrackingOrder(found);
-    } else {
-      alert(`Order number ${trackingSearchTerm} not found. Try one from the order history list (e.g. ST-902148).`);
+    const orderNumber = trackingSearchTerm.trim();
+    if (!orderNumber) {
+      setClientTrackingError('Please enter an order number.');
+      setClientTracking(null);
+      return;
+    }
+
+    await refreshClientTracking(orderNumber);
+  };
+
+  const resetClientTracking = () => {
+    setClientTracking(null);
+    setClientTrackingError('');
+    setClientTrackingRefreshError('');
+    setClientTrackingLastRefreshedAt(null);
+    setTrackingSearchTerm('');
+  };
+
+  const refreshWarehouseDashboard = async () => {
+    if (!user?.token) {
+      return;
+    }
+
+    const authHeaders = { Authorization: `Bearer ${user.token}` };
+    const [dashboardResponse, wmsStatusResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/tracking/dashboard`, { headers: authHeaders }),
+      fetch(`${API_BASE}/api/wms/status`, { headers: authHeaders })
+    ]);
+
+    if (!dashboardResponse.ok) {
+      throw new Error(`Warehouse dashboard request failed with ${dashboardResponse.status}`);
+    }
+
+    const dashboardData = await dashboardResponse.json();
+    setWarehouseDashboard(dashboardData);
+    setWmsStatus(wmsStatusResponse.ok ? await wmsStatusResponse.json() : { status: 'UNKNOWN' });
+    setSelectedWarehousePackage((current) => {
+      const packages = dashboardData.packages || [];
+      if (!packages.length) {
+        return null;
+      }
+      return packages.find((item) => item.orderNumber === current?.orderNumber) || packages[0];
+    });
+  };
+
+  const openWarehouseLoadPanel = (pkg) => {
+    setWarehouseLoadPackage(pkg);
+    setWarehouseLoadLocation('');
+    setWarehouseLoadError('');
+  };
+
+  const closeWarehouseLoadPanel = () => {
+    setWarehouseLoadPackage(null);
+    setWarehouseLoadLocation('');
+    setWarehouseLoadError('');
+  };
+
+  const handleWarehouseMarkLoaded = async () => {
+    if (!warehouseLoadPackage || warehouseLoadSubmitting) {
+      return;
+    }
+
+    if (!warehouseLoadLocation.trim()) {
+      setWarehouseLoadError('Vehicle / Loading Location is required.');
+      return;
+    }
+
+    setWarehouseLoadSubmitting(true);
+    setWarehouseLoadError('');
+
+    try {
+      const response = await fetch(`${API_BASE}/api/tracking/${warehouseLoadPackage.orderNumber}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${user.token}`
+        },
+        body: JSON.stringify({
+          status: 'LOADED',
+          location: warehouseLoadLocation.trim(),
+          description: 'Package loaded onto delivery vehicle'
+        })
+      });
+
+      const bodyText = await response.text();
+      if (!response.ok) {
+        throw new Error(bodyText || `Unable to mark package as loaded (${response.status})`);
+      }
+
+      closeWarehouseLoadPanel();
+      await refreshWarehouseDashboard();
+    } catch (error) {
+      setWarehouseLoadError(error.message || 'Unable to mark package as loaded.');
+    } finally {
+      setWarehouseLoadSubmitting(false);
+    }
+  };
+
+  const handleDriverLoginSubmit = (e) => {
+    e.preventDefault();
+    if (!driverLoginId.trim() || !driverPassword.trim()) {
+      setDriverLoginError('Driver ID and password are required for this prototype access screen.');
+      return;
+    }
+
+    // Prototype-only frontend gate: real driver authentication belongs to the Driver backend owner.
+    writeSessionValue(DRIVER_VERIFIED_SESSION_KEY, 'true');
+    writeSessionValue(DRIVER_ID_SESSION_KEY, driverLoginId.trim());
+    setDriverId(driverLoginId.trim());
+    setDriverVerified(true);
+    setDriverLoginError('');
+    setDriverLoginId('');
+    setDriverPassword('');
+  };
+
+  const handleDriverLogout = () => {
+    removeSessionValue(DRIVER_VERIFIED_SESSION_KEY);
+    removeSessionValue(DRIVER_ID_SESSION_KEY);
+    setDriverVerified(false);
+    setDriverId('');
+    setDriverLoginId('');
+    setDriverPassword('');
+    setDriverLoginError('');
+    setSelectedDelivery(null);
+    setSelectedDeliveryTracking(null);
+    setSelectedDeliveryOrder(null);
+    setPodOpen(false);
+    setFailureOpen(false);
+  };
+
+  const refreshDriverDashboard = async () => {
+    if (!user?.token) {
+      return null;
+    }
+
+    const response = await fetch(`${API_BASE}/api/tracking/dashboard`, {
+      headers: { Authorization: `Bearer ${user.token}` }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Driver manifest request failed with ${response.status}`);
+    }
+
+    const data = await response.json();
+    setDriverDashboard(data);
+    setSelectedDelivery((current) => {
+      if (!current) {
+        return current;
+      }
+      return (data.packages || []).find((pkg) => pkg.orderNumber === current.orderNumber) || current;
+    });
+    return data;
+  };
+
+  const refreshSelectedDeliveryDetails = async () => {
+    if (!user?.token || !selectedDelivery?.orderNumber) {
+      return;
+    }
+
+    const authHeaders = { Authorization: `Bearer ${user.token}` };
+    const [trackingResponse, orderResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}`, { headers: authHeaders }),
+      fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders })
+    ]);
+
+    if (!trackingResponse.ok) {
+      throw new Error(`Tracking detail request failed with ${trackingResponse.status}`);
+    }
+
+    setSelectedDeliveryTracking(await trackingResponse.json());
+    setSelectedDeliveryOrder(orderResponse.ok ? await orderResponse.json() : null);
+  };
+
+  const updateDeliveryStatus = async ({ status, location, description, loadingKey }) => {
+    if (!user?.token || !selectedDelivery?.orderNumber) {
+      return;
+    }
+
+    setDeliveryActionLoading(loadingKey);
+    setDeliveryActionError('');
+
+    try {
+      const response = await fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${user.token}`
+        },
+        body: JSON.stringify({ status, location, description })
+      });
+
+      const bodyText = await response.text();
+      if (!response.ok) {
+        throw new Error(bodyText || `Tracking update failed with ${response.status}`);
+      }
+
+      await refreshSelectedDeliveryDetails();
+      await refreshDriverDashboard();
+    } catch (error) {
+      setDeliveryActionError(error.message || 'Unable to update delivery status');
+      throw error;
+    } finally {
+      setDeliveryActionLoading('');
+    }
+  };
+
+  const handleStartDelivery = async () => {
+    try {
+      await updateDeliveryStatus({
+        status: 'OUT_FOR_DELIVERY',
+        location: 'In transit',
+        description: 'Driver started delivery',
+        loadingKey: 'start'
+      });
+    } catch {
+      // Error state is shown in the delivery details panel.
+    }
+  };
+
+  const clearPodState = () => {
+    setPodOpen(false);
+    setPodPhotoFile(null);
+    setPodPhotoPreviewUrl('');
+    setPodNote('');
+    setPodSignatureDrawn(false);
+    setPodValidationError('');
+    const canvas = signatureCanvasRef.current;
+    if (canvas) {
+      const context = canvas.getContext('2d');
+      context.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  };
+
+  const clearFailureState = () => {
+    setFailureOpen(false);
+    setFailureReason('');
+    setFailureNote('');
+    setFailureValidationError('');
+  };
+
+  const handlePodPhotoChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    setPodPhotoFile(file);
+    setPodValidationError('');
+
+    if (podPhotoPreviewUrl) {
+      URL.revokeObjectURL(podPhotoPreviewUrl);
+    }
+
+    setPodPhotoPreviewUrl(file ? URL.createObjectURL(file) : '');
+  };
+
+  const getSignaturePoint = (event) => {
+    const canvas = signatureCanvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height
+    };
+  };
+
+  const handleSignaturePointerDown = (event) => {
+    const canvas = signatureCanvasRef.current;
+    const context = canvas.getContext('2d');
+    const point = getSignaturePoint(event);
+    signatureDrawingRef.current = true;
+    canvas.setPointerCapture(event.pointerId);
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+  };
+
+  const handleSignaturePointerMove = (event) => {
+    if (!signatureDrawingRef.current) {
+      return;
+    }
+
+    const canvas = signatureCanvasRef.current;
+    const context = canvas.getContext('2d');
+    const point = getSignaturePoint(event);
+    context.lineWidth = 3;
+    context.lineCap = 'round';
+    context.strokeStyle = '#0f172a';
+    context.lineTo(point.x, point.y);
+    context.stroke();
+    setPodSignatureDrawn(true);
+  };
+
+  const handleSignaturePointerUp = () => {
+    signatureDrawingRef.current = false;
+  };
+
+  const clearSignature = () => {
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    const context = canvas.getContext('2d');
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    setPodSignatureDrawn(false);
+  };
+
+  const handleConfirmDelivery = async () => {
+    if (!podPhotoFile || !podSignatureDrawn) {
+      setPodValidationError('Delivery photo and customer signature are required.');
+      return;
+    }
+
+    const note = podNote.trim();
+    const description = note
+      ? `Package delivered successfully with proof of delivery - ${note}`
+      : 'Package delivered successfully with proof of delivery';
+
+    try {
+      await updateDeliveryStatus({
+        status: 'DELIVERED',
+        location: bestDeliveryLocation,
+        description,
+        loadingKey: 'delivered'
+      });
+      clearPodState();
+    } catch {
+      // Error state is shown in the delivery details panel.
+    }
+  };
+
+  const handleConfirmFailure = async () => {
+    if (!failureReason) {
+      setFailureValidationError('Failure reason is required.');
+      return;
+    }
+
+    const note = failureNote.trim();
+    const description = note
+      ? `Delivery failed: ${failureReason} - ${note}`
+      : `Delivery failed: ${failureReason}`;
+
+    try {
+      await updateDeliveryStatus({
+        status: 'FAILED',
+        location: bestDeliveryLocation,
+        description,
+        loadingKey: 'failed'
+      });
+      clearFailureState();
+    } catch {
+      // Error state is shown in the delivery details panel.
     }
   };
 
@@ -1290,6 +2083,24 @@ function App() {
                   <span>Live Tracking</span>
                 </div>
               </li>
+              <li>
+                <div
+                  className={`sidebar-item ${dashboardTab === 'warehouse' ? 'active' : ''}`}
+                  onClick={() => setDashboardTab('warehouse')}
+                >
+                  <ShieldCheckIcon />
+                  <span>Warehouse</span>
+                </div>
+              </li>
+              <li>
+                <div
+                  className={`sidebar-item ${dashboardTab === 'driver' ? 'active' : ''}`}
+                  onClick={() => setDashboardTab('driver')}
+                >
+                  <TruckIcon />
+                  <span>Driver Portal</span>
+                </div>
+              </li>
               {user.role === 'ADMIN' && (
                 <>
                   <li>
@@ -1755,6 +2566,7 @@ function App() {
                                 className="order-id-cell"
                                 onClick={() => {
                                   setActiveTrackingOrder(ord);
+                                  setTrackingSearchTerm(ord.id);
                                   setDashboardTab('tracking');
                                 }}
                               >
@@ -1782,6 +2594,7 @@ function App() {
                                   style={{ padding: '6px 12px', fontSize: '12px' }}
                                   onClick={() => {
                                     setActiveTrackingOrder(ord);
+                                    setTrackingSearchTerm(ord.id);
                                     setDashboardTab('tracking');
                                   }}
                                 >
@@ -1798,8 +2611,868 @@ function App() {
               </div>
             )}
 
+            {/* WAREHOUSE DASHBOARD */}
+            {dashboardTab === 'warehouse' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">Warehouse Dashboard</h1>
+                    <p className="screen-subtitle">Monitor stored packages, capacity, lifecycle activity, and WMS TCP availability</p>
+                  </div>
+                  <span className={`badge ${wmsStatusBadge}`}>
+                    WMS TCP {wmsStatusValue}
+                  </span>
+                </header>
+
+                <div className="warehouse-dashboard">
+                  {warehouseLoading && <div className="card" style={{ marginBottom: '4px' }}>Loading warehouse dashboard...</div>}
+                  {warehouseError && <div className="card" style={{ marginBottom: '4px', color: 'var(--status-failed)' }}>{warehouseError}</div>}
+
+                  <div className="stats-grid cms-stats-grid">
+                    {[
+                      { label: 'Packages Received', value: warehouseStats.received ?? 0, tone: 'primary' },
+                      { label: 'Packages Stored', value: warehouseStats.stored ?? 0, tone: 'pending' },
+                      { label: 'Packages Loaded', value: warehouseStats.loaded ?? 0, tone: 'primary' },
+                      { label: 'Packages Delivered', value: warehouseStats.delivered ?? 0, tone: 'completed' }
+                    ].map((metric) => (
+                      <div className="card stat-card cms-stat-card" key={metric.label}>
+                        <div className="stat-info">
+                          <h4>{metric.label}</h4>
+                          <p className="stat-val">{metric.value}</p>
+                        </div>
+                        <div className={`stat-icon-wrapper cms-stat-tone ${metric.tone}`}>
+                          <TruckIcon />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="warehouse-layout">
+                    <div className="warehouse-main-column">
+                      <div className="card cms-panel warehouse-package-panel">
+                        <div className="cms-panel-header">
+                          <div>
+                            <h3>Current Packages</h3>
+                            <p>Newest package state updates first</p>
+                          </div>
+                          <span className="badge badge-transit">{warehousePackages.length} records</span>
+                        </div>
+
+                        <div className="cms-retry-table-wrap">
+                          <table className="cms-retry-table warehouse-table">
+                            <thead>
+                              <tr>
+                                <th>Order Number</th>
+                                <th>Package ID</th>
+                                <th>Status</th>
+                                <th>Current Location</th>
+                                <th>Updated</th>
+                                <th>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {warehousePackages.length === 0 ? (
+                                <tr>
+                                  <td colSpan="6" className="warehouse-empty-cell">
+                                    No packages are stored in tracking yet.
+                                  </td>
+                                </tr>
+                              ) : (
+                                warehousePackages.map((pkg) => (
+                                  <tr
+                                    key={pkg.orderNumber}
+                                    className={selectedWarehousePackage?.orderNumber === pkg.orderNumber ? 'warehouse-row selected' : 'warehouse-row'}
+                                    onClick={() => setSelectedWarehousePackage(pkg)}
+                                  >
+                                    <td className="order-id-cell">{pkg.orderNumber}</td>
+                                    <td>{pkg.packageId}</td>
+                                    <td>
+                                      <span className={`badge ${getWarehouseStatusBadge(pkg.status)}`}>
+                                        {toWarehouseStatusLabel(pkg.status)}
+                                      </span>
+                                    </td>
+                                    <td>{pkg.currentLocation || 'Not assigned'}</td>
+                                    <td>{formatDateTime(pkg.updatedAt)}</td>
+                                    <td>
+                                      {pkg.status === 'WAREHOUSE' ? (
+                                        <button
+                                          type="button"
+                                          className="btn btn-secondary warehouse-load-button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            openWarehouseLoadPanel(pkg);
+                                          }}
+                                        >
+                                          Mark as Loaded
+                                        </button>
+                                      ) : (
+                                        <span className="warehouse-no-action">No action</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {warehouseLoadPackage && (
+                          <div className="modal-overlay warehouse-load-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="warehouse-load-title">
+                            <div className="warehouse-load-panel">
+                              <div className="cms-panel-header compact">
+                                <div>
+                                  <h3 id="warehouse-load-title">Mark as Loaded</h3>
+                                  <p>Confirm this warehouse package has been loaded onto a delivery vehicle.</p>
+                                </div>
+                              </div>
+
+                              <div className="warehouse-load-summary">
+                                <div>
+                                  <span>Order Number</span>
+                                  <strong>{warehouseLoadPackage.orderNumber}</strong>
+                                </div>
+                                <div>
+                                  <span>Package ID</span>
+                                  <strong>{warehouseLoadPackage.packageId}</strong>
+                                </div>
+                                <div>
+                                  <span>Current Location</span>
+                                  <strong>{warehouseLoadPackage.currentLocation || 'Not assigned'}</strong>
+                                </div>
+                              </div>
+
+                              <div className="order-form-group">
+                                <label htmlFor="warehouse-load-location">Vehicle / Loading Location</label>
+                                <input
+                                  id="warehouse-load-location"
+                                  type="text"
+                                  className="order-input"
+                                  placeholder="Enter vehicle, bay, or loading location"
+                                  value={warehouseLoadLocation}
+                                  onChange={(event) => {
+                                    setWarehouseLoadLocation(event.target.value);
+                                    setWarehouseLoadError('');
+                                  }}
+                                  disabled={warehouseLoadSubmitting}
+                                />
+                              </div>
+
+                              {warehouseLoadError && <div className="error-message">{warehouseLoadError}</div>}
+
+                              <div className="warehouse-load-actions">
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  onClick={closeWarehouseLoadPanel}
+                                  disabled={warehouseLoadSubmitting}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  onClick={handleWarehouseMarkLoaded}
+                                  disabled={warehouseLoadSubmitting || !warehouseLoadLocation.trim()}
+                                >
+                                  {warehouseLoadSubmitting ? 'Marking Loaded...' : 'Confirm Loaded'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="card cms-panel">
+                        <div className="cms-panel-header compact">
+                          <div>
+                            <h3>Tracking Timeline</h3>
+                            <p>{selectedWarehousePackage ? selectedWarehousePackage.orderNumber : 'Select a package to inspect its real tracking history'}</p>
+                          </div>
+                        </div>
+
+                        {selectedWarehouseTrackingLoading ? (
+                          <div className="warehouse-empty-state">Loading tracking history...</div>
+                        ) : selectedWarehouseTrackingError ? (
+                          <div className="error-message">{selectedWarehouseTrackingError}</div>
+                        ) : selectedWarehouseTrackingForPackage?.history?.length ? (
+                          <div className="warehouse-timeline">
+                            {selectedWarehouseTrackingForPackage.history.map((item) => (
+                              <div className="warehouse-timeline-item" key={`${item.status}-${item.eventTime}`}>
+                                <span className={`warehouse-timeline-dot ${item.status === 'FAILED' ? 'failed' : ''}`}></span>
+                                <div>
+                                  <div className="warehouse-timeline-title">{toWarehouseStatusLabel(item.status)}</div>
+                                  <div className="warehouse-timeline-meta">{item.location || 'No location'} - {formatDateTime(item.eventTime)}</div>
+                                  <p>{item.description || 'No description provided'}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="warehouse-empty-state">Select a package to view its tracking timeline.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="warehouse-side-column">
+                      <div className="card cms-status-card">
+                        <div className="cms-preview-label">Storage Capacity</div>
+                        <div className="warehouse-capacity-value">
+                          {warehouseCapacity.used ?? 0} / {warehouseCapacity.total ?? 0}
+                        </div>
+                        <div className="warehouse-capacity-bar">
+                          <div
+                            className="warehouse-capacity-fill"
+                            style={{ width: `${Math.min(100, Math.max(0, warehouseCapacity.percentage ?? 0))}%` }}
+                          ></div>
+                        </div>
+                        <p>{warehouseAvailableCapacity} slots available. Capacity is based on packages currently in Warehouse status.</p>
+                      </div>
+
+                      <div className="card cms-status-card">
+                        <div className="cms-preview-label">WMS TCP Availability</div>
+                        <div className="cms-status-indicator">
+                          <span className={`cms-status-dot ${wmsStatusValue === 'ONLINE' ? 'connected' : 'disconnected'}`}></span>
+                          <strong>{wmsStatusValue}</strong>
+                        </div>
+                        <p>This reflects the last on-demand TCP request/response with the WMS endpoint, not a permanently open socket.</p>
+                        <div className="warehouse-status-details">
+                          <span>Endpoint</span>
+                          <strong>{wmsStatus?.host || 'unknown'}:{wmsStatus?.port || 'unknown'}</strong>
+                          <span>Last success</span>
+                          <strong>{formatDateTime(wmsStatus?.lastSuccessfulAt)}</strong>
+                          <span>Last failure</span>
+                          <strong>{formatDateTime(wmsStatus?.lastFailureAt)}</strong>
+                          {wmsStatus?.lastError && (
+                            <>
+                              <span>Error</span>
+                              <strong>{wmsStatus.lastError}</strong>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="card cms-events-card">
+                        <div className="cms-preview-label">Recent Activity</div>
+                        <div className="cms-event-log">
+                          {warehouseRecentActivity.length === 0 ? (
+                            <div className="warehouse-empty-state">No tracking activity yet.</div>
+                          ) : (
+                            warehouseRecentActivity.map((entry) => (
+                              <div className="cms-event-row warehouse-activity-row" key={`${entry.orderNumber}-${entry.eventTime}`}>
+                                <span className={`badge ${getWarehouseStatusBadge(entry.status)}`}>{toWarehouseStatusLabel(entry.status)}</span>
+                                <span className="cms-event-name">
+                                  <strong>{entry.packageId}</strong> for {entry.orderNumber}: {entry.description || 'Tracking updated'}
+                                  <small>{formatDateTime(entry.eventTime)}</small>
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* DRIVER PORTAL */}
+            {dashboardTab === 'driver' && (
+              <div>
+                {!driverVerified ? (
+                  <div className="driver-login-shell">
+                    <div className="card driver-login-card">
+                      <div className="driver-login-icon">
+                        <TruckIcon />
+                      </div>
+                      <h1>Driver Login</h1>
+                      <p>This prototype verifies access inside the authenticated SwiftTrack session.</p>
+                      {driverLoginError && <div className="error-message">{driverLoginError}</div>}
+                      <form onSubmit={handleDriverLoginSubmit} className="driver-login-form">
+                        <div className="order-form-group">
+                          <label htmlFor="driver-id">Driver ID</label>
+                          <input
+                            id="driver-id"
+                            type="text"
+                            className="order-input"
+                            placeholder="e.g. DRV-102"
+                            value={driverLoginId}
+                            onChange={(e) => setDriverLoginId(e.target.value)}
+                          />
+                        </div>
+                        <div className="order-form-group">
+                          <label htmlFor="driver-password">Password</label>
+                          <input
+                            id="driver-password"
+                            type="password"
+                            className="order-input"
+                            placeholder="Password"
+                            value={driverPassword}
+                            onChange={(e) => setDriverPassword(e.target.value)}
+                          />
+                        </div>
+                        <button type="submit" className="btn btn-primary driver-wide-button">
+                          Sign In
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                ) : selectedDelivery ? (
+                  <div className="driver-portal">
+                    <header className="driver-header">
+                      <div>
+                        <button className="btn btn-secondary driver-back-button" onClick={() => {
+                          clearPodState();
+                          clearFailureState();
+                          setSelectedDelivery(null);
+                        }}>
+                          Back to Manifest
+                        </button>
+                        <h1>Delivery Details</h1>
+                        <p>{selectedDelivery.packageId} for order {selectedDelivery.orderNumber}</p>
+                      </div>
+                      <button className="btn btn-secondary" onClick={handleDriverLogout}>
+                        Driver Logout
+                      </button>
+                    </header>
+
+                    {selectedDeliveryLoading && <div className="card">Loading delivery details...</div>}
+                    {selectedDeliveryError && <div className="card" style={{ color: 'var(--status-failed)' }}>{selectedDeliveryError}</div>}
+
+                    <div className="driver-detail-grid">
+                      <div className="card driver-detail-card">
+                        <div className="driver-detail-title-row">
+                          <div>
+                            <span className="cms-preview-label">Current Delivery</span>
+                            <h2>{selectedDelivery.packageId}</h2>
+                          </div>
+                          <span className={`badge ${getWarehouseStatusBadge(selectedDeliveryTracking?.status || selectedDelivery.status)}`}>
+                            {toWarehouseStatusLabel(selectedDeliveryTracking?.status || selectedDelivery.status)}
+                          </span>
+                        </div>
+
+                        <div className={`driver-progress-bar ${(selectedDeliveryTracking?.status || selectedDelivery.status) === 'FAILED' ? 'failed' : ''}`}>
+                          <div style={{ width: `${deliveryProgress}%` }}></div>
+                        </div>
+                        <div className="driver-progress-label">{deliveryProgress}% progress</div>
+
+                        <div className="driver-info-grid">
+                          <div>
+                            <span>Order Number</span>
+                            <strong>{selectedDelivery.orderNumber}</strong>
+                          </div>
+                          <div>
+                            <span>Current Location</span>
+                            <strong>{selectedDeliveryTracking?.currentLocation || selectedDelivery.currentLocation || 'Not available'}</strong>
+                          </div>
+                          <div>
+                            <span>Customer</span>
+                            <strong>{selectedOrderInfo.receiverName || 'Not available'}</strong>
+                          </div>
+                          <div>
+                            <span>Phone</span>
+                            <strong>{selectedOrderInfo.receiverPhone || 'Not available'}</strong>
+                          </div>
+                          <div>
+                            <span>Delivery Address</span>
+                            <strong>{selectedOrderInfo.recipientAddress || selectedOrderInfo.deliveryAddress || 'Not available'}</strong>
+                          </div>
+                          <div>
+                            <span>Sender Address</span>
+                            <strong>{selectedOrderInfo.senderAddress || selectedOrderInfo.pickupAddress || 'Not available'}</strong>
+                          </div>
+                          <div className="driver-info-wide">
+                            <span>Delivery Notes</span>
+                            <strong>{selectedOrderInfo.deliveryNotes || selectedOrderInfo.notes || selectedOrderInfo.description || 'Not available'}</strong>
+                          </div>
+                        </div>
+
+                        <div className="driver-action-row">
+                          {selectedOrderInfo.receiverPhone ? (
+                            <a className="btn btn-primary" href={`tel:${selectedOrderInfo.receiverPhone}`}>Call Customer</a>
+                          ) : (
+                            <button className="btn btn-primary" disabled>Call Customer</button>
+                          )}
+                          {currentDeliveryStatus === 'LOADED' && (
+                            <button className="btn btn-primary" onClick={handleStartDelivery} disabled={Boolean(deliveryActionLoading)}>
+                              {deliveryActionLoading === 'start' ? 'Starting...' : 'Start Delivery'}
+                            </button>
+                          )}
+                          {currentDeliveryStatus === 'OUT_FOR_DELIVERY' && (
+                            <>
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => {
+                                  setPodOpen(true);
+                                  setFailureOpen(false);
+                                  setDeliveryActionError('');
+                                }}
+                                disabled={Boolean(deliveryActionLoading)}
+                              >
+                                Mark Delivered
+                              </button>
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => {
+                                  setFailureOpen(true);
+                                  setPodOpen(false);
+                                  setDeliveryActionError('');
+                                }}
+                                disabled={Boolean(deliveryActionLoading)}
+                              >
+                                Mark Failed
+                              </button>
+                            </>
+                          )}
+                        </div>
+                        {currentDeliveryStatus === 'LOADED' && (
+                          <p className="driver-disabled-note">Delivery must be started before final delivery actions are available.</p>
+                        )}
+                        {currentDeliveryStatus === 'OUT_FOR_DELIVERY' && (
+                          <p className="driver-disabled-note">Proof of Delivery required for successful delivery.</p>
+                        )}
+                        {currentDeliveryStatus === 'DELIVERED' && (
+                          <div className="driver-terminal-state completed">Delivery completed successfully.</div>
+                        )}
+                        {currentDeliveryStatus === 'FAILED' && (
+                          <div className="driver-terminal-state failed">Delivery marked as failed.</div>
+                        )}
+                        {deliveryActionError && <div className="error-message driver-action-error">{deliveryActionError}</div>}
+
+                        {podOpen && (
+                          <div className="driver-action-panel">
+                            <div className="cms-panel-header compact">
+                              <div>
+                                <h3>Proof of Delivery</h3>
+                                <p>{selectedDelivery.packageId} for {selectedDelivery.orderNumber}</p>
+                              </div>
+                            </div>
+                            <div className="driver-pod-grid">
+                              <div className="order-form-group">
+                                <label htmlFor="pod-photo">Delivery Photo</label>
+                                <input
+                                  id="pod-photo"
+                                  type="file"
+                                  className="order-input"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={handlePodPhotoChange}
+                                  disabled={Boolean(deliveryActionLoading)}
+                                />
+                                {podPhotoPreviewUrl ? (
+                                  <img className="driver-photo-preview" src={podPhotoPreviewUrl} alt="Selected delivery proof preview" />
+                                ) : (
+                                  <div className="driver-photo-empty">No delivery photo selected</div>
+                                )}
+                              </div>
+                              <div className="order-form-group">
+                                <label>Customer Signature</label>
+                                {/* Frontend POD capture for the Member 4 prototype; persistent POD storage belongs to the POD/delivery backend owner. */}
+                                <canvas
+                                  ref={signatureCanvasRef}
+                                  className="driver-signature-canvas"
+                                  width="520"
+                                  height="180"
+                                  onPointerDown={handleSignaturePointerDown}
+                                  onPointerMove={handleSignaturePointerMove}
+                                  onPointerUp={handleSignaturePointerUp}
+                                  onPointerLeave={handleSignaturePointerUp}
+                                ></canvas>
+                                <button type="button" className="btn btn-secondary driver-wide-button" onClick={clearSignature} disabled={Boolean(deliveryActionLoading)}>
+                                  Clear Signature
+                                </button>
+                              </div>
+                            </div>
+                            <div className="order-form-group">
+                              <label htmlFor="pod-note">Delivery Note</label>
+                              <textarea
+                                id="pod-note"
+                                className="order-textarea"
+                                placeholder="Optional recipient or handoff note"
+                                value={podNote}
+                                onChange={(e) => setPodNote(e.target.value)}
+                                disabled={Boolean(deliveryActionLoading)}
+                              ></textarea>
+                            </div>
+                            {podValidationError && <div className="error-message">{podValidationError}</div>}
+                            <div className="driver-action-row">
+                              <button type="button" className="btn btn-secondary" onClick={clearPodState} disabled={Boolean(deliveryActionLoading)}>
+                                Cancel
+                              </button>
+                              <button type="button" className="btn btn-primary" onClick={handleConfirmDelivery} disabled={!canConfirmPod}>
+                                {deliveryActionLoading === 'delivered' ? 'Confirming...' : 'Confirm Delivery'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {failureOpen && (
+                          <div className="driver-action-panel">
+                            <div className="cms-panel-header compact">
+                              <div>
+                                <h3>Failed Delivery</h3>
+                                <p>Record the real reason for this delivery attempt</p>
+                              </div>
+                            </div>
+                            <div className="order-form-group">
+                              <label htmlFor="failure-reason">Failure Reason</label>
+                              <select
+                                id="failure-reason"
+                                className="order-select"
+                                value={failureReason}
+                                onChange={(e) => {
+                                  setFailureReason(e.target.value);
+                                  setFailureValidationError('');
+                                }}
+                                disabled={Boolean(deliveryActionLoading)}
+                              >
+                                <option value="">Select reason</option>
+                                <option value="Customer unavailable">Customer unavailable</option>
+                                <option value="Incorrect address">Incorrect address</option>
+                                <option value="Customer refused package">Customer refused package</option>
+                                <option value="Unable to contact customer">Unable to contact customer</option>
+                                <option value="Other">Other</option>
+                              </select>
+                            </div>
+                            <div className="order-form-group">
+                              <label htmlFor="failure-note">Additional Notes</label>
+                              <textarea
+                                id="failure-note"
+                                className="order-textarea"
+                                placeholder="Optional context for dispatch"
+                                value={failureNote}
+                                onChange={(e) => setFailureNote(e.target.value)}
+                                disabled={Boolean(deliveryActionLoading)}
+                              ></textarea>
+                            </div>
+                            {failureValidationError && <div className="error-message">{failureValidationError}</div>}
+                            <div className="driver-action-row">
+                              <button type="button" className="btn btn-secondary" onClick={clearFailureState} disabled={Boolean(deliveryActionLoading)}>
+                                Cancel
+                              </button>
+                              <button type="button" className="btn btn-primary" onClick={handleConfirmFailure} disabled={!canConfirmFailure}>
+                                {deliveryActionLoading === 'failed' ? 'Confirming...' : 'Confirm Failure'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="driver-side-stack">
+                        <div className="card driver-map-card">
+                          <div className="cms-preview-label">Route Preview</div>
+                          <div className="driver-map-placeholder">
+                            <div className="driver-map-node">Warehouse</div>
+                            <div className="driver-map-path"></div>
+                            <div className="driver-map-node destination">{mapAddress || 'Recipient address unavailable'}</div>
+                          </div>
+                          {mapsHref ? (
+                            <a href={mapsHref} target="_blank" rel="noreferrer" className="btn btn-secondary driver-wide-button">
+                              Open in Maps
+                            </a>
+                          ) : (
+                            <button className="btn btn-secondary driver-wide-button" disabled>Open in Maps</button>
+                          )}
+                        </div>
+
+                        <div className="card driver-history-card">
+                          <div className="cms-preview-label">Tracking History</div>
+                          {selectedDeliveryTracking?.history?.length ? (
+                            <div className="warehouse-timeline">
+                              {selectedDeliveryTracking.history.map((item) => (
+                                <div className="warehouse-timeline-item" key={`${item.status}-${item.eventTime}`}>
+                                  <span className={`warehouse-timeline-dot ${item.status === 'FAILED' ? 'failed' : ''}`}></span>
+                                  <div>
+                                    <div className="warehouse-timeline-title">{toWarehouseStatusLabel(item.status)}</div>
+                                    <div className="warehouse-timeline-meta">{item.location || 'No location'} - {formatDateTime(item.eventTime)}</div>
+                                    <p>{item.description || 'No description provided'}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="warehouse-empty-state">No tracking history available.</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="driver-portal">
+                    <header className="driver-header">
+                      <div>
+                        <h1>Driver Dashboard</h1>
+                        <p>Driver {driverId || 'Portal'} delivery manifest</p>
+                      </div>
+                      <button className="btn btn-secondary" onClick={handleDriverLogout}>
+                        Driver Logout
+                      </button>
+                    </header>
+
+                    {driverLoading && <div className="card">Loading driver manifest...</div>}
+                    {driverError && <div className="card" style={{ color: 'var(--status-failed)' }}>{driverError}</div>}
+
+                    <div className="driver-stats-grid">
+                      {[
+                        { label: "Today's Deliveries", value: driverStats.todaysDeliveries },
+                        { label: 'Remaining', value: driverStats.remaining },
+                        { label: 'In Progress', value: driverStats.inProgress },
+                        { label: 'Completed', value: driverStats.completed }
+                      ].map((metric) => (
+                        <div className="card driver-stat-card" key={metric.label}>
+                          <span>{metric.label}</span>
+                          <strong>{metric.value}</strong>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="card driver-manifest-card">
+                      <div className="cms-panel-header compact">
+                        <div>
+                          <h3>Today's Deliveries</h3>
+                          <p>Loaded, out-for-delivery, delivered, and failed packages from tracking</p>
+                        </div>
+                      </div>
+
+                      <div className="driver-manifest-list">
+                        {driverPackages.length === 0 ? (
+                          <div className="driver-empty-state">No deliveries assigned for today</div>
+                        ) : (
+                          driverPackages.map((pkg) => (
+                            <div className="driver-package-card" key={pkg.orderNumber}>
+                              <div>
+                                <div className="driver-package-id">{pkg.packageId}</div>
+                                <div className="driver-package-meta">{pkg.orderNumber}</div>
+                                <div className="driver-package-meta">{pkg.currentLocation || 'Current location not available'}</div>
+                              </div>
+                              <div className="driver-package-actions">
+                                <span className={`badge ${getWarehouseStatusBadge(pkg.status)}`}>
+                                  {toWarehouseStatusLabel(pkg.status)}
+                                </span>
+                                <button className="btn btn-primary" onClick={() => {
+                                  clearPodState();
+                                  clearFailureState();
+                                  setDeliveryActionError('');
+                                  setSelectedDelivery(pkg);
+                                }}>
+                                  View Delivery
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* TAB 4: LIVE ORDER TRACKING */}
             {dashboardTab === 'tracking' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">Shipment Tracking</h1>
+                    <p className="screen-subtitle">Search by order number and follow real package status from the Tracking Service</p>
+                  </div>
+                  {clientTracking && (
+                    <button className="btn btn-secondary" onClick={resetClientTracking}>
+                      Track Another Shipment
+                    </button>
+                  )}
+                </header>
+
+                <div className="card client-tracking-search-card">
+                  <form onSubmit={handleTrackSubmit} className="client-tracking-search-form">
+                    <input
+                      type="text"
+                      className="order-input"
+                      placeholder="Enter order number, e.g. SL-12345678"
+                      value={trackingSearchTerm}
+                      onChange={(e) => setTrackingSearchTerm(e.target.value)}
+                    />
+                    <button type="submit" className="btn btn-primary" disabled={clientTrackingLoading}>
+                      {clientTrackingLoading ? 'Searching...' : 'Track Shipment'}
+                    </button>
+                  </form>
+                </div>
+
+                {clientTrackingLoading && (
+                  <div className="card client-tracking-state">Loading tracking information...</div>
+                )}
+                {clientTrackingError && (
+                  <div className="card client-tracking-state error">{clientTrackingError}</div>
+                )}
+
+                {!clientTracking && !clientTrackingLoading && !clientTrackingError && (
+                  <div className="card client-tracking-empty">
+                    <TrackingIcon />
+                    <h3>Track a shipment</h3>
+                    <p>Enter an order number to load its current package status and real tracking history.</p>
+                  </div>
+                )}
+
+                {clientTracking && (
+                  <div className="client-tracking-dashboard">
+                    <div className={`card client-tracking-hero ${clientTrackingStatus === 'FAILED' ? 'failed' : ''}`}>
+                      <div className="client-tracking-hero-main">
+                        <div>
+                          <span className="cms-preview-label">Current Package</span>
+                          <h2>{clientTracking.packageId}</h2>
+                          <p>{clientTracking.orderNumber}</p>
+                        </div>
+                        <span className={`badge ${getWarehouseStatusBadge(clientTrackingStatus)}`}>
+                          {toWarehouseStatusLabel(clientTrackingStatus)}
+                        </span>
+                      </div>
+                      <div className={`client-progress-bar ${clientTrackingStatus === 'FAILED' ? 'failed' : ''}`}>
+                        <div style={{ width: `${clientTrackingProgress}%` }}></div>
+                      </div>
+                      <div className="client-progress-meta">
+                        <span>{clientTrackingProgress}% progress</span>
+                        <span>{getClientStatusMessage(clientTrackingStatus)}</span>
+                      </div>
+                      <div className="client-refresh-row">
+                        <span>{['DELIVERED', 'FAILED'].includes(clientTrackingStatus) ? 'Tracking complete' : 'Tracking active'}</span>
+                        <span>Last refreshed: {formatDateTime(clientTrackingLastRefreshedAt)}</span>
+                      </div>
+                      {clientTrackingRefreshError && (
+                        <div className="client-refresh-error">{clientTrackingRefreshError}</div>
+                      )}
+                    </div>
+
+                    {clientTrackingStatus === 'DELIVERED' && (
+                      <div className="card client-terminal-card completed">
+                        <h3>Delivered</h3>
+                        <p>{latestTerminalEvent?.description || 'Package delivered successfully'}</p>
+                        <span>{formatDateTime(latestTerminalEvent?.eventTime || clientTracking.updatedAt)}</span>
+                      </div>
+                    )}
+
+                    {clientTrackingStatus === 'FAILED' && (
+                      <div className="card client-terminal-card failed">
+                        <h3>Delivery Attempt Failed</h3>
+                        <p>{latestTerminalEvent?.description || 'Delivery attempt unsuccessful'}</p>
+                        <span>{formatDateTime(latestTerminalEvent?.eventTime || clientTracking.updatedAt)}</span>
+                      </div>
+                    )}
+
+                    <div className="client-tracking-grid">
+                      <div className="client-tracking-main-column">
+                        <div className="card client-progress-steps-card">
+                          <div className="cms-panel-header compact">
+                            <div>
+                              <h3>Delivery Progress</h3>
+                              <p>Completed steps reflect real tracking history; upcoming steps are expected future states.</p>
+                            </div>
+                          </div>
+                          <div className="client-progress-steps">
+                            {[
+                              { status: 'PENDING', label: 'Order Received / Pending' },
+                              { status: 'WAREHOUSE', label: 'Warehouse' },
+                              { status: 'LOADED', label: 'Loaded' },
+                              { status: 'OUT_FOR_DELIVERY', label: 'Out for Delivery' },
+                              { status: 'DELIVERED', label: 'Delivered' }
+                            ].map((step) => {
+                              const historyEntry = clientTrackingHistory.find((entry) => entry.status === step.status);
+                              const isCurrent = clientTrackingStatus === step.status;
+                              const isCompleted = Boolean(historyEntry) || (step.status === 'DELIVERED' && clientTrackingStatus === 'DELIVERED');
+                              return (
+                                <div className={`client-progress-step ${isCompleted ? 'completed' : ''} ${isCurrent ? 'current' : ''}`} key={step.status}>
+                                  <span className="client-progress-step-dot"></span>
+                                  <div>
+                                    <strong>{step.label}</strong>
+                                    {historyEntry ? (
+                                      <p>{historyEntry.description || toWarehouseStatusLabel(historyEntry.status)} - {formatDateTime(historyEntry.eventTime)}</p>
+                                    ) : (
+                                      <p>Expected step</p>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="card client-timeline-card">
+                          <div className="cms-panel-header compact">
+                            <div>
+                              <h3>Tracking Timeline</h3>
+                              <p>Real tracking history from the Tracking Service</p>
+                            </div>
+                          </div>
+                          {clientTrackingHistory.length ? (
+                            <div className="warehouse-timeline">
+                              {clientTrackingHistory.map((item) => (
+                                <div className="warehouse-timeline-item" key={`${item.status}-${item.eventTime}`}>
+                                  <span className={`warehouse-timeline-dot ${item.status === 'FAILED' ? 'failed' : ''}`}></span>
+                                  <div>
+                                    <div className="warehouse-timeline-title">{toWarehouseStatusLabel(item.status)}</div>
+                                    <div className="warehouse-timeline-meta">{item.location || 'No location'} - {formatDateTime(item.eventTime)}</div>
+                                    <p>{item.description || 'No description provided'}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="warehouse-empty-state">No tracking history has been recorded yet.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="client-tracking-side-column">
+                        <div className="card client-location-card">
+                          <div className="cms-preview-label">Last Known Location</div>
+                          <h3>{clientTracking.currentLocation || 'Not available'}</h3>
+                          <p>Exact GPS coordinates are not available from the current tracking backend.</p>
+                          <div className="driver-map-placeholder client-map-placeholder">
+                            <div className="driver-map-node">{clientTracking.currentLocation || 'Latest location unavailable'}</div>
+                            <div className="driver-map-path"></div>
+                            <div className="driver-map-node destination">{clientTrackingDestination || 'Destination not available'}</div>
+                          </div>
+                          {clientTrackingMapsHref ? (
+                            <a href={clientTrackingMapsHref} target="_blank" rel="noreferrer" className="btn btn-secondary driver-wide-button">
+                              Open Destination in Maps
+                            </a>
+                          ) : (
+                            <button className="btn btn-secondary driver-wide-button" disabled>Open Destination in Maps</button>
+                          )}
+                        </div>
+
+                        <div className="card client-eta-card">
+                          <div className="cms-preview-label">Delivery Status</div>
+                          <h3>{getClientStatusMessage(clientTrackingStatus)}</h3>
+                          <p>Live ETA unavailable</p>
+                          <span>Updated: {formatDateTime(clientTracking.updatedAt)}</span>
+                        </div>
+
+                        <div className="card client-updates-card">
+                          <div className="cms-preview-label">Tracking Updates</div>
+                          {clientTrackingUpdates.length ? (
+                            <div className="client-updates-list">
+                              {clientTrackingUpdates.map((entry) => (
+                                <div className="client-update-row" key={`${entry.status}-${entry.eventTime}`}>
+                                  <span className={`badge ${getWarehouseStatusBadge(entry.status)}`}>{toWarehouseStatusLabel(entry.status)}</span>
+                                  <div>
+                                    <strong>{entry.description || toWarehouseStatusLabel(entry.status)}</strong>
+                                    <p>{formatDateTime(entry.eventTime)}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="warehouse-empty-state">No updates yet.</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Legacy static tracking view kept disabled after Phase 11 real tracking integration. */}
+            {dashboardTab === 'tracking-legacy' && (
               <div>
                 <header className="screen-header">
                   <div>

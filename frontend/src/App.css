@@ -1921,3 +1921,862 @@ body {
   font-weight: 600;
   color: var(--text-main);
 }
+
+/* --- WAREHOUSE DASHBOARD --- */
+.warehouse-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.warehouse-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.85fr);
+  gap: 24px;
+}
+
+@media (max-width: 1180px) {
+  .warehouse-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.warehouse-main-column,
+.warehouse-side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.warehouse-table .warehouse-row {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.warehouse-table .warehouse-row:hover,
+.warehouse-table .warehouse-row.selected {
+  background-color: var(--bg-inner);
+}
+
+.warehouse-empty-cell,
+.warehouse-empty-state {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+
+.warehouse-capacity-value {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-top: 10px;
+}
+
+.warehouse-capacity-bar {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background-color: var(--bg-inner);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-top: 14px;
+}
+
+.warehouse-capacity-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--status-completed));
+  transition: width 0.25s ease;
+}
+
+.warehouse-status-details {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.5fr) minmax(0, 1fr);
+  gap: 10px 14px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.warehouse-status-details span {
+  color: var(--text-muted);
+}
+
+.warehouse-status-details strong {
+  color: var(--text-main);
+  word-break: break-word;
+}
+
+.warehouse-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 4px;
+}
+
+.warehouse-timeline-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.warehouse-timeline-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: var(--primary);
+  margin-top: 5px;
+  box-shadow: 0 0 0 6px var(--primary-light);
+}
+
+.warehouse-timeline-dot.failed {
+  background-color: var(--status-failed);
+  box-shadow: 0 0 0 6px var(--status-failed-bg);
+}
+
+.warehouse-timeline-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.warehouse-timeline-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.warehouse-timeline-item p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 5px;
+}
+
+.warehouse-activity-row {
+  align-items: flex-start;
+}
+
+.warehouse-activity-row .badge {
+  flex-shrink: 0;
+}
+
+.warehouse-activity-row small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.warehouse-load-button {
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.warehouse-no-action {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.warehouse-load-modal-overlay {
+  padding: 24px;
+}
+
+.warehouse-load-panel {
+  padding: 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background-color: var(--bg-inner);
+  width: min(860px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  box-shadow: var(--shadow-xl);
+}
+
+.warehouse-load-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.warehouse-load-summary div {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background-color: #ffffff;
+}
+
+.warehouse-load-summary span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.warehouse-load-summary strong {
+  display: block;
+  color: var(--text-main);
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.warehouse-load-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* --- DRIVER PORTAL --- */
+.driver-login-shell {
+  min-height: calc(100vh - 96px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.driver-login-card {
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+
+.driver-login-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background-color: var(--primary-light);
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.driver-login-card h1 {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+.driver-login-card p {
+  color: var(--text-secondary);
+  margin: 8px 0 22px;
+  font-size: 14px;
+}
+
+.driver-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+}
+
+.driver-wide-button {
+  width: 100%;
+  min-height: 46px;
+}
+
+.driver-portal {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.driver-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.driver-header h1 {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+.driver-header p {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 15px;
+}
+
+.driver-back-button {
+  margin-bottom: 14px;
+}
+
+.driver-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.driver-stat-card {
+  min-height: 112px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.driver-stat-card span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.driver-stat-card strong {
+  font-size: 34px;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+.driver-manifest-card {
+  padding: 22px;
+}
+
+.driver-manifest-list {
+  display: grid;
+  gap: 14px;
+}
+
+.driver-package-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background-color: var(--bg-inner);
+  padding: 16px;
+}
+
+.driver-package-id {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+.driver-package-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
+.driver-package-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.driver-empty-state {
+  padding: 34px 18px;
+  text-align: center;
+  color: var(--text-muted);
+  background-color: var(--bg-inner);
+  border: 1px dashed var(--border-focus);
+  border-radius: 12px;
+}
+
+.driver-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.8fr);
+  gap: 24px;
+}
+
+.driver-detail-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.driver-detail-title-row h2 {
+  font-size: 26px;
+  margin-top: 4px;
+}
+
+.driver-progress-bar {
+  width: 100%;
+  height: 14px;
+  border-radius: 999px;
+  background-color: var(--bg-inner);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-top: 24px;
+}
+
+.driver-progress-bar div {
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--primary);
+  transition: width 0.25s ease;
+}
+
+.driver-progress-bar.failed div {
+  background-color: var(--status-failed);
+}
+
+.driver-progress-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+.driver-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.driver-info-grid div {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-color: var(--bg-inner);
+}
+
+.driver-info-grid span {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+
+.driver-info-grid strong {
+  display: block;
+  font-size: 14px;
+  color: var(--text-main);
+  word-break: break-word;
+}
+
+.driver-info-wide {
+  grid-column: 1 / -1;
+}
+
+.driver-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.driver-action-row .btn {
+  min-height: 46px;
+}
+
+.driver-disabled-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+
+.driver-action-error {
+  margin-top: 16px;
+}
+
+.driver-terminal-state {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.driver-terminal-state.completed {
+  color: var(--status-completed);
+  background-color: var(--status-completed-bg);
+}
+
+.driver-terminal-state.failed {
+  color: var(--status-failed);
+  background-color: var(--status-failed-bg);
+}
+
+.driver-action-panel {
+  margin-top: 22px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background-color: var(--bg-inner);
+  padding: 18px;
+}
+
+.driver-pod-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.driver-photo-preview,
+.driver-photo-empty {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  margin-top: 10px;
+}
+
+.driver-photo-preview {
+  object-fit: cover;
+  background-color: #ffffff;
+}
+
+.driver-photo-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background-color: #ffffff;
+  font-size: 13px;
+}
+
+.driver-signature-canvas {
+  width: 100%;
+  height: 180px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background-color: #ffffff;
+  margin: 10px 0;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.driver-side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.driver-map-placeholder {
+  min-height: 210px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: linear-gradient(135deg, #f8fafc, #eff6ff);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 18px;
+  margin: 14px 0;
+}
+
+.driver-map-node {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background-color: #ffffff;
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.driver-map-node.destination {
+  align-self: flex-end;
+}
+
+.driver-map-path {
+  height: 48px;
+  border-left: 3px dashed var(--primary);
+  margin-left: 22px;
+}
+
+/* --- CLIENT TRACKING --- */
+.client-tracking-search-card {
+  margin-bottom: 24px;
+}
+
+.client-tracking-search-form {
+  display: flex;
+  gap: 16px;
+}
+
+.client-tracking-search-form .btn {
+  flex-shrink: 0;
+  min-height: 44px;
+}
+
+.client-tracking-state,
+.client-tracking-empty {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 34px;
+}
+
+.client-tracking-state.error {
+  color: var(--status-failed);
+}
+
+.client-tracking-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.client-tracking-empty svg {
+  color: var(--primary);
+}
+
+.client-tracking-empty h3 {
+  font-size: 18px;
+}
+
+.client-tracking-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.client-tracking-hero.failed {
+  border-color: rgba(239, 68, 68, 0.22);
+}
+
+.client-tracking-hero-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.client-tracking-hero h2 {
+  font-size: 28px;
+  font-weight: 800;
+  margin-top: 4px;
+}
+
+.client-tracking-hero p {
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.client-progress-bar {
+  width: 100%;
+  height: 14px;
+  border-radius: 999px;
+  background-color: var(--bg-inner);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-top: 24px;
+}
+
+.client-progress-bar div {
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--primary);
+  transition: width 0.25s ease;
+}
+
+.client-progress-bar.failed div {
+  background-color: var(--status-failed);
+}
+
+.client-progress-meta,
+.client-refresh-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+.client-refresh-row {
+  color: var(--text-muted);
+}
+
+.client-refresh-error {
+  margin-top: 12px;
+  color: var(--status-pending);
+  font-size: 13px;
+}
+
+.client-terminal-card {
+  border-radius: 12px;
+}
+
+.client-terminal-card.completed {
+  background-color: var(--status-completed-bg);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.client-terminal-card.failed {
+  background-color: var(--status-failed-bg);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.client-terminal-card h3 {
+  font-size: 18px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.client-terminal-card p {
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.client-terminal-card span {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.client-tracking-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+  gap: 24px;
+}
+
+.client-tracking-main-column,
+.client-tracking-side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.client-progress-steps {
+  display: grid;
+  gap: 14px;
+}
+
+.client-progress-step {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background-color: var(--bg-inner);
+}
+
+.client-progress-step-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: var(--border-focus);
+  margin-top: 5px;
+}
+
+.client-progress-step.completed .client-progress-step-dot {
+  background-color: var(--status-completed);
+  box-shadow: 0 0 0 6px var(--status-completed-bg);
+}
+
+.client-progress-step.current {
+  border-color: rgba(37, 99, 235, 0.28);
+  background-color: var(--primary-light);
+}
+
+.client-progress-step strong {
+  font-size: 14px;
+  color: var(--text-main);
+}
+
+.client-progress-step p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.client-location-card h3,
+.client-eta-card h3 {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-top: 8px;
+}
+
+.client-location-card p,
+.client-eta-card p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.client-eta-card span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.client-map-placeholder {
+  min-height: 190px;
+}
+
+.client-updates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.client-update-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background-color: var(--bg-inner);
+}
+
+.client-update-row .badge {
+  flex-shrink: 0;
+}
+
+.client-update-row strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.client-update-row p {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+@media (max-width: 920px) {
+  .driver-header,
+  .driver-package-card,
+  .driver-package-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .driver-stats-grid,
+  .driver-detail-grid,
+  .driver-info-grid,
+  .driver-pod-grid,
+  .client-tracking-grid,
+  .warehouse-load-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .client-tracking-search-form,
+  .client-tracking-hero-main,
+  .client-progress-meta,
+  .client-refresh-row,
+  .warehouse-load-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .driver-header h1 {
+    font-size: 26px;
+  }
+
+  .driver-package-actions .btn,
+  .driver-action-row .btn,
+  .driver-action-row a {
+    width: 100%;
+  }
+}
