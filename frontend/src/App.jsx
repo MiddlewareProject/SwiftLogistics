@@ -9,6 +9,22 @@ const DASHBOARD_TAB_STORAGE_KEY = 'swifttrack-dashboard-tab';
 const DRIVER_VERIFIED_SESSION_KEY = 'swifttrack_driver_verified';
 const DRIVER_ID_SESSION_KEY = 'swifttrack_driver_id';
 
+const getPortalPathTab = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  if (window.location.pathname === '/warehouse') {
+    return 'warehouse';
+  }
+
+  if (window.location.pathname === '/driver') {
+    return 'driver';
+  }
+
+  return null;
+};
+
 const readStoredValue = (key, fallback) => {
   if (typeof window === 'undefined') {
     return fallback;
@@ -278,10 +294,22 @@ const mapBackendOrder = (order) => {
 };
 
 function App() {
+  const [portalPathTab, setPortalPathTab] = useState(() => getPortalPathTab());
+
   // Navigation Screens: 'landing', 'login', 'register', 'dashboard'
   const [currentScreen, setCurrentScreen] = useState(() => {
+    const pathTab = getPortalPathTab();
     const storedUser = getStoredUser();
     const storedScreen = readStoredValue(DASHBOARD_SCREEN_STORAGE_KEY, 'landing');
+
+    if (pathTab === 'driver') {
+      return 'dashboard';
+    }
+
+    if (pathTab) {
+      return storedUser ? 'dashboard' : 'login';
+    }
+
     if (!storedUser && storedScreen === 'dashboard') {
       return 'landing';
     }
@@ -291,7 +319,16 @@ function App() {
 
   // Dashboard Sub-tabs: 'overview', 'create', 'history', 'tracking', 'cms', 'notifications', 'profile'
   const [dashboardTab, setDashboardTab] = useState(() => {
+    const pathTab = getPortalPathTab();
+    if (pathTab) {
+      return pathTab;
+    }
+
     const storedTab = readStoredValue(DASHBOARD_TAB_STORAGE_KEY, 'overview');
+    if (storedTab === 'warehouse' || storedTab === 'driver') {
+      return 'overview';
+    }
+
     const storedUser = getStoredUser();
     if ((storedTab === 'cms' || storedTab === 'routes') && storedUser?.role !== 'ADMIN') {
       return 'overview';
@@ -415,6 +452,30 @@ function App() {
   const signatureDrawingRef = useRef(false);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const syncPortalPath = () => {
+      const nextPortalPath = getPortalPathTab();
+      setPortalPathTab(nextPortalPath);
+
+      if (nextPortalPath === 'driver') {
+        setDashboardTab(nextPortalPath);
+        setCurrentScreen('dashboard');
+      } else if (nextPortalPath) {
+        setDashboardTab(nextPortalPath);
+        setCurrentScreen(getStoredUser() ? 'dashboard' : 'login');
+      }
+    };
+
+    window.addEventListener('popstate', syncPortalPath);
+    return () => {
+      window.removeEventListener('popstate', syncPortalPath);
+    };
+  }, []);
+
+  useEffect(() => {
     writeStoredValue(DASHBOARD_SCREEN_STORAGE_KEY, currentScreen);
   }, [currentScreen]);
 
@@ -429,6 +490,27 @@ function App() {
       window.localStorage.removeItem(AUTH_USER_STORAGE_KEY);
     }
   }, [user]);
+
+  const openPortalEntry = (portal) => {
+    const path = `/${portal}`;
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', path);
+    }
+
+    setPortalPathTab(portal);
+    setDashboardTab(portal);
+    setCurrentScreen(portal === 'driver' || user?.token ? 'dashboard' : 'login');
+  };
+
+  const returnToClientLogin = () => {
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', '/');
+    }
+
+    setPortalPathTab(null);
+    setDashboardTab('overview');
+    setCurrentScreen('login');
+  };
 
   // Load the signed-in client's real orders from order-service whenever the session changes
   useEffect(() => {
@@ -1004,7 +1086,7 @@ function App() {
         token: auth.token
       });
       setCurrentScreen('dashboard');
-      setDashboardTab('overview');
+      setDashboardTab(portalPathTab || 'overview');
     } catch (error) {
       setLoginError(error.message || 'Unable to sign in. Please try again.');
     } finally {
@@ -1058,7 +1140,7 @@ function App() {
         token: auth.token
       });
       setCurrentScreen('dashboard');
-      setDashboardTab('overview');
+      setDashboardTab(portalPathTab || 'overview');
     } catch (error) {
       setRegisterError(error.message || 'Unable to create account. Please try again.');
     } finally {
@@ -1549,6 +1631,22 @@ function App() {
     if (sortBy === 'Weight') return b.weight - a.weight;
     return 0;
   });
+  const isSeparatedMemberPortal = portalPathTab === 'warehouse' || portalPathTab === 'driver';
+  const portalLoginTitle = portalPathTab === 'warehouse'
+    ? 'SwiftTrack Warehouse'
+    : portalPathTab === 'driver'
+      ? 'SwiftTrack Driver'
+      : 'Welcome Back';
+  const portalLoginSubtitle = portalPathTab === 'warehouse'
+    ? 'Warehouse Staff Access'
+    : portalPathTab === 'driver'
+      ? 'Continue to Driver Portal'
+      : 'Sign in to your client portal';
+  const portalLoginButtonLabel = portalPathTab === 'warehouse'
+    ? 'Continue to Warehouse Portal'
+    : portalPathTab === 'driver'
+      ? 'Continue to Driver Portal'
+      : 'Sign In';
 
   return (
     <div>
@@ -1905,8 +2003,8 @@ function App() {
               </a>
             </div>
             <div className="auth-header">
-              <h2>Welcome Back</h2>
-              <p style={{ marginTop: '4px' }}>Sign in to your client portal</p>
+              <h2>{portalLoginTitle}</h2>
+              <p style={{ marginTop: '4px' }}>{portalLoginSubtitle}</p>
             </div>
 
             {loginError && <div className="error-message" style={{ margin: '0 0 20px 0' }}>⚠️ {loginError}</div>}
@@ -1944,9 +2042,27 @@ function App() {
                 <a href="#" className="auth-forgot" onClick={() => alert('Password reset link sent to email.')}>Forgot password?</a>
               </div>
               <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px' }} disabled={loginSubmitting}>
-                {loginSubmitting ? 'Signing In...' : 'Sign In'}
+                {loginSubmitting ? 'Signing In...' : portalLoginButtonLabel}
               </button>
             </form>
+
+            {!portalPathTab ? (
+              <div className="staff-access-panel">
+                <div>
+                  <h3>Driver Access</h3>
+                  <p>Open the driver operations portal.</p>
+                </div>
+                <div className="staff-access-actions">
+                  <button type="button" className="btn btn-secondary" onClick={() => openPortalEntry('driver')}>
+                    Driver Portal
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" className="auth-back-button" onClick={returnToClientLogin}>
+                Back to Client Login
+              </button>
+            )}
 
             <p className="auth-switch">
               Don't have an account?{' '}
@@ -2036,9 +2152,9 @@ function App() {
 
       {/* 3. AUTHENTICATED PORTAL (CLIENT DASHBOARD) */}
       {currentScreen === 'dashboard' && (
-        <div className="dashboard-layout">
+        <div className={`dashboard-layout ${isSeparatedMemberPortal ? 'member-portal-layout' : ''}`}>
           {/* Sidebar */}
-          <aside className="sidebar">
+          {!isSeparatedMemberPortal && <aside className="sidebar">
             <div className="sidebar-logo">
               <a href="#" className="logo" onClick={() => setCurrentScreen('landing')}>
                 <LogoIcon />
@@ -2085,15 +2201,6 @@ function App() {
               </li>
               <li>
                 <div
-                  className={`sidebar-item ${dashboardTab === 'warehouse' ? 'active' : ''}`}
-                  onClick={() => setDashboardTab('warehouse')}
-                >
-                  <ShieldCheckIcon />
-                  <span>Warehouse</span>
-                </div>
-              </li>
-              <li>
-                <div
                   className={`sidebar-item ${dashboardTab === 'driver' ? 'active' : ''}`}
                   onClick={() => setDashboardTab('driver')}
                 >
@@ -2101,7 +2208,7 @@ function App() {
                   <span>Driver Portal</span>
                 </div>
               </li>
-              {user.role === 'ADMIN' && (
+              {user?.role === 'ADMIN' && (
                 <>
                   <li>
                     <div
@@ -2119,6 +2226,15 @@ function App() {
                     >
                       <RouteOptimizationIcon />
                       <span>Route Optimization</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'warehouse' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('warehouse')}
+                    >
+                      <ShieldCheckIcon />
+                      <span>Warehouse Operations</span>
                     </div>
                   </li>
                 </>
@@ -2171,7 +2287,7 @@ function App() {
                 <span>Logout</span>
               </div>
             </div>
-          </aside>
+          </aside>}
 
           {/* Main Area */}
           <main className="main-content">
@@ -3674,7 +3790,7 @@ function App() {
             )}
 
             {/* TAB 5: CMS INTEGRATION (staff/admin only) */}
-            {user.role === 'ADMIN' && dashboardTab === 'cms' && (
+            {user?.role === 'ADMIN' && dashboardTab === 'cms' && (
               <div>
                 <header className="screen-header">
                   <div>
@@ -3822,7 +3938,7 @@ function App() {
 
             {/* TAB: ROUTE OPTIMIZATION */}
             {/* TAB: ROUTE OPTIMIZATION (staff/admin only) */}
-            {user.role === 'ADMIN' && dashboardTab === 'routes' && (
+            {user?.role === 'ADMIN' && dashboardTab === 'routes' && (
               <div>
                 <header className="screen-header">
                   <div>

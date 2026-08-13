@@ -732,6 +732,49 @@ body {
   text-decoration: underline;
 }
 
+.staff-access-panel {
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background-color: var(--bg-inner);
+}
+
+.staff-access-panel h3 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+
+.staff-access-panel p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.staff-access-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.auth-back-button {
+  display: block;
+  margin: 18px auto 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-back-button:hover {
+  text-decoration: underline;
+}
+
 
 /* --- 3. CLIENT PORTAL LAYOUT --- */
 .dashboard-layout {
@@ -856,6 +899,10 @@ body {
   min-height: 100vh;
 }
 
+.member-portal-layout .main-content {
+  margin-left: 0;
+}
+
 @media (max-width: 1024px) {
   .sidebar {
     width: 80px;
@@ -881,6 +928,10 @@ body {
   .main-content {
     margin-left: 80px;
     padding: 24px;
+  }
+
+  .member-portal-layout .main-content {
+    margin-left: 0;
   }
 }
 
