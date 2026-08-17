@@ -17,6 +17,7 @@ import com.swiftlogistics.tracking_service.model.TrackingHistory;
 import com.swiftlogistics.tracking_service.model.TrackingStatus;
 import com.swiftlogistics.tracking_service.repository.PackageTrackingRepository;
 import com.swiftlogistics.tracking_service.repository.TrackingHistoryRepository;
+import com.swiftlogistics.tracking_service.dto.RouteGeneratedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -145,6 +146,70 @@ public class TrackingService {
         return toTrackingResponse(tracking);
     }
 
+    @Transactional
+    public boolean assignDriver(RouteGeneratedEvent event) {
+        if (event == null || isBlank(event.getOrderNumber())) {
+            throw new IllegalArgumentException("RouteGeneratedEvent orderNumber is required");
+        }
+
+        if (isBlank(event.getDriverId())) {
+            throw new IllegalArgumentException("RouteGeneratedEvent driverId is required");
+        }
+
+        PackageTracking tracking = packageTrackingRepository
+                .findByOrderNumber(event.getOrderNumber())
+                .orElse(null);
+
+        if (tracking == null) {
+            log.warn(
+                    "Tracking record not yet available for route assignment: orderNumber={}, driverId={}",
+                    event.getOrderNumber(),
+                    event.getDriverId()
+            );
+            return false;
+        }
+
+        tracking.setAssignedDriverId(event.getDriverId());
+        tracking.setUpdatedAt(LocalDateTime.now());
+        packageTrackingRepository.save(tracking);
+
+        TrackingUpdatedEvent notificationEvent = TrackingUpdatedEvent.builder()
+                .orderNumber(tracking.getOrderNumber())
+                .clientId(tracking.getClientId())
+                .packageId(tracking.getPackageId())
+                .status(tracking.getStatus())
+                .location(tracking.getCurrentLocation())
+                .description(
+                        "Driver " + event.getDriverName()
+                                + " assigned to order " + tracking.getOrderNumber()
+                )
+                .updatedAt(tracking.getUpdatedAt())
+                .build();
+
+        trackingUpdatedPublisher.publish(notificationEvent);
+
+        log.info(
+                "Driver {} assigned to order {}",
+                event.getDriverId(),
+                event.getOrderNumber()
+        );
+
+        return true;
+    }
+
+    @Transactional(readOnly = true)
+    public List<WarehousePackageResponse> getDriverPackages(String driverId) {
+        if (isBlank(driverId)) {
+            throw new IllegalArgumentException("Driver ID is required");
+        }
+
+        return packageTrackingRepository
+                .findByAssignedDriverIdOrderByUpdatedAtDesc(driverId)
+                .stream()
+                .map(this::toWarehousePackageResponse)
+                .toList();
+    }
+
     private void createTracking(PackageStoredEvent event, LocalDateTime eventTime) {
         PackageTracking tracking = PackageTracking.builder()
                 .orderNumber(event.getOrderNumber())
@@ -168,6 +233,18 @@ public class TrackingService {
                 .build();
 
         trackingHistoryRepository.save(history);
+
+        TrackingUpdatedEvent notificationEvent = TrackingUpdatedEvent.builder()
+            .orderNumber(tracking.getOrderNumber())
+            .clientId(tracking.getClientId())
+            .packageId(tracking.getPackageId())
+            .status(tracking.getStatus())
+            .location(tracking.getCurrentLocation())
+            .description(STORED_DESCRIPTION)
+            .updatedAt(eventTime)
+            .build();
+
+        trackingUpdatedPublisher.publish(notificationEvent);
         log.info("PackageStored persisted for order {} package {}", event.getOrderNumber(), event.getPackageId());
     }
 

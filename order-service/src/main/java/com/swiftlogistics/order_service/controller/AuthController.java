@@ -1,6 +1,7 @@
 package com.swiftlogistics.order_service.controller;
 
 import com.swiftlogistics.order_service.dto.AuthResponse;
+import com.swiftlogistics.order_service.dto.DriverRegisterRequest;
 import com.swiftlogistics.order_service.dto.LoginRequest;
 import com.swiftlogistics.order_service.dto.RegisterRequest;
 import com.swiftlogistics.order_service.service.UserService;
@@ -21,6 +22,21 @@ public class AuthController {
             return ResponseEntity.ok(userService.register(request));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PostMapping("/register-driver")
+    public ResponseEntity<?> registerDriver(
+            @Valid @RequestBody DriverRegisterRequest request) {
+
+        try {
+            return ResponseEntity.ok(
+                    userService.registerDriver(request)
+            );
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest()
+                    .body(e.getMessage());
         }
     }
 

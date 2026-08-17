@@ -33,6 +33,8 @@ public class PackageTracking {
     @Column(nullable = false)
     private String packageId;
 
+    private String assignedDriverId;
+
     @Column(nullable = false)
     private String status;
 
