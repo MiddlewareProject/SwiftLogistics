@@ -14,4 +14,7 @@ public interface PackageTrackingRepository extends JpaRepository<PackageTracking
     long countByStatus(String status);
 
     List<PackageTracking> findAllByOrderByUpdatedAtDesc();
+
+    List<PackageTracking> findByAssignedDriverIdOrderByUpdatedAtDesc(String assignedDriverId);
+
 }

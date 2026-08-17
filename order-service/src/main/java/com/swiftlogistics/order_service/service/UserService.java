@@ -1,6 +1,7 @@
 package com.swiftlogistics.order_service.service;
 
 import com.swiftlogistics.order_service.dto.AuthResponse;
+import com.swiftlogistics.order_service.dto.DriverRegisterRequest;
 import com.swiftlogistics.order_service.dto.LoginRequest;
 import com.swiftlogistics.order_service.dto.RegisterRequest;
 import com.swiftlogistics.order_service.model.User;
@@ -38,6 +39,31 @@ public class UserService {
                 .role(user.getRole())
                 .build();
     }
+
+    public AuthResponse registerDriver(DriverRegisterRequest request) {
+
+        if (userRepository.existsByUsername(request.getDriverId())) {
+            throw new IllegalArgumentException("Driver ID already exists");
+        }
+
+        User driver = User.builder()
+                .username(request.getDriverId())
+                .password(passwordEncoder.encode(request.getPassword()))
+                .email(request.getEmail())
+                .role("DRIVER")
+                .build();
+
+        driver = userRepository.save(driver);
+
+        String token = jwtUtil.generateToken(driver);
+
+        return AuthResponse.builder()
+                .token(token)
+                .username(driver.getUsername())
+                .role(driver.getRole())
+                .build();
+    }
+
 
     public AuthResponse login(LoginRequest request) {
         User user = userRepository.findByUsername(request.getUsername())

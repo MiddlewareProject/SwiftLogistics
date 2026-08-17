@@ -808,7 +808,7 @@ function App() {
       setDriverError('');
 
       try {
-        const response = await fetch(`${API_BASE}/api/tracking/dashboard`, {
+        const response = await fetch(`${API_BASE}/api/tracking/driver`, {
           headers: { Authorization: `Bearer ${user.token}` }
         });
 
@@ -817,6 +817,7 @@ function App() {
         }
 
         const data = await response.json();
+        console.log('DRIVER DASHBOARD RESPONSE:', data);
         if (!cancelled) {
           setDriverDashboard(data);
         }
@@ -1012,14 +1013,25 @@ function App() {
     : wmsStatusValue === 'OFFLINE'
       ? 'badge-failed'
       : 'badge-pending';
-  const driverPackages = (driverDashboard?.packages || []).filter((pkg) =>
-    ['LOADED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'].includes(pkg.status)
-  );
+
+  console.log('DRIVER DASHBOARD STATE:', driverDashboard);
+  console.log('DRIVER PACKAGES RAW:', driverDashboard?.packages);
+  const driverPackages =
+    (driverDashboard?.packages || []).filter((pkg) =>
+      ['WAREHOUSE', 'LOADED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED'].includes(pkg.status)
+    );
+
   const driverStats = {
     todaysDeliveries: driverPackages.length,
-    remaining: driverPackages.filter((pkg) => pkg.status === 'LOADED' || pkg.status === 'OUT_FOR_DELIVERY').length,
-    inProgress: driverPackages.filter((pkg) => pkg.status === 'OUT_FOR_DELIVERY').length,
-    completed: driverPackages.filter((pkg) => pkg.status === 'DELIVERED' || pkg.status === 'FAILED').length
+    remaining: driverPackages.filter((pkg) =>
+      ['WAREHOUSE', 'LOADED', 'OUT_FOR_DELIVERY'].includes(pkg.status)
+    ).length,
+    inProgress: driverPackages.filter((pkg) =>
+      pkg.status === 'OUT_FOR_DELIVERY'
+    ).length,
+    completed: driverPackages.filter((pkg) =>
+      pkg.status === 'DELIVERED' || pkg.status === 'FAILED'
+    ).length
   };
   const selectedOrderInfo = selectedDeliveryOrder || orders.find((order) => order.id === selectedDelivery?.orderNumber) || {};
   const currentDeliveryStatus = selectedDeliveryTracking?.status || selectedDelivery?.status;
@@ -1343,22 +1355,85 @@ function App() {
     }
   };
 
-  const handleDriverLoginSubmit = (e) => {
+  const handleDriverLoginSubmit = async (e) => {
     e.preventDefault();
+
     if (!driverLoginId.trim() || !driverPassword.trim()) {
-      setDriverLoginError('Driver ID and password are required for this prototype access screen.');
+      setDriverLoginError('Driver ID and password are required.');
       return;
     }
 
-    // Prototype-only frontend gate: real driver authentication belongs to the Driver backend owner.
-    writeSessionValue(DRIVER_VERIFIED_SESSION_KEY, 'true');
-    writeSessionValue(DRIVER_ID_SESSION_KEY, driverLoginId.trim());
-    setDriverId(driverLoginId.trim());
-    setDriverVerified(true);
     setDriverLoginError('');
-    setDriverLoginId('');
-    setDriverPassword('');
-  };
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          username: driverLoginId.trim(),
+          password: driverPassword
+        })
+      });
+
+      // Read response as text first.
+      // This works whether backend returns JSON or plain text.
+      const responseText = await response.text();
+
+      let data = {};
+
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        // Backend returned plain text instead of JSON
+        data = {
+          message: responseText.trim()
+        };
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data.message ||
+          data.error ||
+          'Invalid driver ID or password.'
+        );
+      }
+
+      // Make sure this account is actually a DRIVER account
+      if (data.role !== 'DRIVER') {
+        throw new Error('This account is not registered as a driver.');
+      }
+
+      // Store the authenticated backend user
+      const authenticatedUser = {
+        username: data.username,
+        role: data.role,
+        token: data.token
+      };
+
+      setUser(authenticatedUser);
+      writeStoredValue(AUTH_USER_STORAGE_KEY, authenticatedUser);
+
+      // Driver-specific session information
+      writeSessionValue(DRIVER_VERIFIED_SESSION_KEY, 'true');
+      writeSessionValue(DRIVER_ID_SESSION_KEY, data.username);
+
+      setDriverId(data.username);
+      setDriverVerified(true);
+
+      setDriverLoginId('');
+      setDriverPassword('');
+      setDriverLoginError('');
+
+    } catch (error) {
+      console.error('Driver login error:', error);
+
+      setDriverLoginError(
+        error.message || 'Unable to login. Please try again.'
+      );
+    }
+  };  
 
   const handleDriverLogout = () => {
     removeSessionValue(DRIVER_VERIFIED_SESSION_KEY);
@@ -1380,7 +1455,7 @@ function App() {
       return null;
     }
 
-    const response = await fetch(`${API_BASE}/api/tracking/dashboard`, {
+    const response = await fetch(`${API_BASE}/api/tracking/driver`, {
       headers: { Authorization: `Bearer ${user.token}` }
     });
 
@@ -2199,15 +2274,7 @@ function App() {
                   <span>Live Tracking</span>
                 </div>
               </li>
-              <li>
-                <div
-                  className={`sidebar-item ${dashboardTab === 'driver' ? 'active' : ''}`}
-                  onClick={() => setDashboardTab('driver')}
-                >
-                  <TruckIcon />
-                  <span>Driver Portal</span>
-                </div>
-              </li>
+              
               {user?.role === 'ADMIN' && (
                 <>
                   <li>

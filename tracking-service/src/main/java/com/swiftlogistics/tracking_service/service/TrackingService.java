@@ -17,6 +17,7 @@ import com.swiftlogistics.tracking_service.model.TrackingHistory;
 import com.swiftlogistics.tracking_service.model.TrackingStatus;
 import com.swiftlogistics.tracking_service.repository.PackageTrackingRepository;
 import com.swiftlogistics.tracking_service.repository.TrackingHistoryRepository;
+import com.swiftlogistics.tracking_service.dto.RouteGeneratedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -143,6 +144,44 @@ public class TrackingService {
         trackingUpdatedPublisher.publish(event);
 
         return toTrackingResponse(tracking);
+    }
+
+    @Transactional
+    public void assignDriver(RouteGeneratedEvent event) {
+        if (event == null || isBlank(event.getOrderNumber())) {
+            throw new IllegalArgumentException("RouteGeneratedEvent orderNumber is required");
+        }
+
+        if (isBlank(event.getDriverId())) {
+            throw new IllegalArgumentException("RouteGeneratedEvent driverId is required");
+        }
+
+        PackageTracking tracking = packageTrackingRepository.findByOrderNumber(event.getOrderNumber())
+                .orElseThrow(() -> new IllegalStateException(
+                        "No tracking record found for route assignment: " + event.getOrderNumber()
+                ));
+
+        tracking.setAssignedDriverId(event.getDriverId());
+        packageTrackingRepository.save(tracking);
+
+        log.info(
+                "Driver {} assigned to order {}",
+                event.getDriverId(),
+                event.getOrderNumber()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<WarehousePackageResponse> getDriverPackages(String driverId) {
+        if (isBlank(driverId)) {
+            throw new IllegalArgumentException("Driver ID is required");
+        }
+
+        return packageTrackingRepository
+                .findByAssignedDriverIdOrderByUpdatedAtDesc(driverId)
+                .stream()
+                .map(this::toWarehousePackageResponse)
+                .toList();
     }
 
     private void createTracking(PackageStoredEvent event, LocalDateTime eventTime) {
