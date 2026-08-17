@@ -1,7 +1,8 @@
 package com.swiftlogistics.notification_service.service;
 
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
-
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import com.swiftlogistics.notification_service.dto.DriverLoginRequest;
 import com.swiftlogistics.notification_service.dto.DriverLoginResponse;
 import com.swiftlogistics.notification_service.entity.Driver;
@@ -39,12 +40,16 @@ public class DriverService {
             );
         }
 
-        if (!driver.getPassword()
-                .equals(request.getPassword())) {
+        BCryptPasswordEncoder passwordEncoder =
+                new BCryptPasswordEncoder();
 
-            throw new RuntimeException(
-                    "Invalid driver ID or password"
-            );
+        if (!passwordEncoder.matches(
+                request.getPassword(),
+                driver.getPassword())) {
+
+        throw new RuntimeException(
+                "Invalid driver ID or password"
+        );
         }
 
         String token =

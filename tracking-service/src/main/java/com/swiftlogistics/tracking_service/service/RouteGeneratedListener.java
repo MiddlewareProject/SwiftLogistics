@@ -23,6 +23,33 @@ public class RouteGeneratedListener {
                 event.getDriverName()
         );
 
-        trackingService.assignDriver(event);
+        int maxAttempts = 10;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (trackingService.assignDriver(event)) {
+                return;
+            }
+
+            log.warn(
+                    "Tracking record not ready for {}, retrying driver assignment ({}/{})",
+                    event.getOrderNumber(),
+                    attempt,
+                    maxAttempts
+            );
+
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(
+                        "Driver assignment retry interrupted", e
+                );
+            }
+        }
+
+        throw new IllegalStateException(
+                "Unable to assign driver after retries: "
+                        + event.getOrderNumber()
+        );
     }
 }

@@ -102,6 +102,49 @@ public class NotificationService {
         return saved;
     }
 
+    public Notification createOrderCreatedNotification(
+            String orderNumber,
+            Long clientId,
+            String description) {
+
+        Notification notification =
+                Notification.builder()
+                        .orderNumber(orderNumber)
+                        .clientId(clientId)
+                        .recipientType("CLIENT")
+                        .recipientId(
+                                clientId != null
+                                        ? clientId.toString()
+                                        : null
+                        )
+                        .title("Order Created")
+                        .message(
+                                description != null
+                                        ? "Your order " + orderNumber
+                                                + " has been created. "
+                                                + description
+                                        : "Your order " + orderNumber
+                                                + " has been created."
+                        )
+                        .notificationType("ORDER_CREATED")
+                        .status("PENDING")
+                        .read(false)
+                        .createdAt(LocalDateTime.now())
+                        .build();
+
+        Notification saved =
+                notificationRepository.save(notification);
+
+        NotificationDto dto =
+                toDto(saved);
+
+        broadcast(dto);
+
+        return saved;
+    }
+
+
+
     public List<NotificationDto> getAllNotifications() {
 
         return notificationRepository

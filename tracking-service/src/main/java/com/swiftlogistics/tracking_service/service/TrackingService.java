@@ -147,7 +147,7 @@ public class TrackingService {
     }
 
     @Transactional
-    public void assignDriver(RouteGeneratedEvent event) {
+    public boolean assignDriver(RouteGeneratedEvent event) {
         if (event == null || isBlank(event.getOrderNumber())) {
             throw new IllegalArgumentException("RouteGeneratedEvent orderNumber is required");
         }
@@ -156,19 +156,45 @@ public class TrackingService {
             throw new IllegalArgumentException("RouteGeneratedEvent driverId is required");
         }
 
-        PackageTracking tracking = packageTrackingRepository.findByOrderNumber(event.getOrderNumber())
-                .orElseThrow(() -> new IllegalStateException(
-                        "No tracking record found for route assignment: " + event.getOrderNumber()
-                ));
+        PackageTracking tracking = packageTrackingRepository
+                .findByOrderNumber(event.getOrderNumber())
+                .orElse(null);
+
+        if (tracking == null) {
+            log.warn(
+                    "Tracking record not yet available for route assignment: orderNumber={}, driverId={}",
+                    event.getOrderNumber(),
+                    event.getDriverId()
+            );
+            return false;
+        }
 
         tracking.setAssignedDriverId(event.getDriverId());
+        tracking.setUpdatedAt(LocalDateTime.now());
         packageTrackingRepository.save(tracking);
+
+        TrackingUpdatedEvent notificationEvent = TrackingUpdatedEvent.builder()
+                .orderNumber(tracking.getOrderNumber())
+                .clientId(tracking.getClientId())
+                .packageId(tracking.getPackageId())
+                .status(tracking.getStatus())
+                .location(tracking.getCurrentLocation())
+                .description(
+                        "Driver " + event.getDriverName()
+                                + " assigned to order " + tracking.getOrderNumber()
+                )
+                .updatedAt(tracking.getUpdatedAt())
+                .build();
+
+        trackingUpdatedPublisher.publish(notificationEvent);
 
         log.info(
                 "Driver {} assigned to order {}",
                 event.getDriverId(),
                 event.getOrderNumber()
         );
+
+        return true;
     }
 
     @Transactional(readOnly = true)
@@ -207,6 +233,18 @@ public class TrackingService {
                 .build();
 
         trackingHistoryRepository.save(history);
+
+        TrackingUpdatedEvent notificationEvent = TrackingUpdatedEvent.builder()
+            .orderNumber(tracking.getOrderNumber())
+            .clientId(tracking.getClientId())
+            .packageId(tracking.getPackageId())
+            .status(tracking.getStatus())
+            .location(tracking.getCurrentLocation())
+            .description(STORED_DESCRIPTION)
+            .updatedAt(eventTime)
+            .build();
+
+        trackingUpdatedPublisher.publish(notificationEvent);
         log.info("PackageStored persisted for order {} package {}", event.getOrderNumber(), event.getPackageId());
     }
 
