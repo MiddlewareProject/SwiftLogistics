@@ -11,17 +11,21 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class RouteGeneratedEvent {
+public class DriverPackageResponse {
     private String orderNumber;
     private Long clientId;
+    private String packageId;
+    private String status;
+    private String currentLocation;
+    private LocalDateTime updatedAt;
     private String routeId;
     private String driverId;
     private String driverName;
     private String vehicleId;
     private String vehiclePlate;
+    private Integer stopSequence;
     private Double distanceKm;
     private Integer durationMinutes;
     private String trafficLevel;
-    private Integer stopSequence;
-    private LocalDateTime generatedAt;
+    private LocalDateTime assignmentTime;
 }

@@ -1,6 +1,9 @@
 package com.swiftlogistics.tracking_service.service;
 
 import com.swiftlogistics.tracking_service.dto.PackageStoredEvent;
+import com.swiftlogistics.tracking_service.dto.DeliveryProofResponse;
+import com.swiftlogistics.tracking_service.dto.DriverPackageResponse;
+import com.swiftlogistics.tracking_service.dto.DriverStatusUpdateRequest;
 import com.swiftlogistics.tracking_service.dto.StatusUpdateRequest;
 import com.swiftlogistics.tracking_service.dto.TrackingHistoryResponse;
 import com.swiftlogistics.tracking_service.dto.TrackingResponse;
@@ -10,12 +13,19 @@ import com.swiftlogistics.tracking_service.dto.WarehouseCapacityResponse;
 import com.swiftlogistics.tracking_service.dto.WarehouseDashboardResponse;
 import com.swiftlogistics.tracking_service.dto.WarehouseDashboardStats;
 import com.swiftlogistics.tracking_service.dto.WarehousePackageResponse;
+import com.swiftlogistics.tracking_service.exception.DriverAccessDeniedException;
 import com.swiftlogistics.tracking_service.exception.InvalidTrackingStatusException;
 import com.swiftlogistics.tracking_service.exception.TrackingNotFoundException;
+import com.swiftlogistics.tracking_service.model.DeliveryProof;
+import com.swiftlogistics.tracking_service.model.FailedDelivery;
 import com.swiftlogistics.tracking_service.model.PackageTracking;
+import com.swiftlogistics.tracking_service.model.PendingDriverAssignment;
 import com.swiftlogistics.tracking_service.model.TrackingHistory;
 import com.swiftlogistics.tracking_service.model.TrackingStatus;
+import com.swiftlogistics.tracking_service.repository.DeliveryProofRepository;
+import com.swiftlogistics.tracking_service.repository.FailedDeliveryRepository;
 import com.swiftlogistics.tracking_service.repository.PackageTrackingRepository;
+import com.swiftlogistics.tracking_service.repository.PendingDriverAssignmentRepository;
 import com.swiftlogistics.tracking_service.repository.TrackingHistoryRepository;
 import com.swiftlogistics.tracking_service.dto.RouteGeneratedEvent;
 import lombok.RequiredArgsConstructor;
@@ -23,34 +33,70 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class TrackingService {
     private static final String STORED_DESCRIPTION = "Package stored in warehouse";
+    private static final long MAX_PROOF_FILE_BYTES = 5 * 1024 * 1024;
+    private static final Set<String> ALLOWED_PROOF_MEDIA_TYPES = Set.of(
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "image/gif"
+    );
+    private static final List<String> DRIVER_MANIFEST_STATUSES = List.of(
+            TrackingStatus.LOADED.name(),
+            TrackingStatus.OUT_FOR_DELIVERY.name(),
+            TrackingStatus.DELIVERED.name(),
+            TrackingStatus.FAILED.name()
+    );
+    private static final List<String> DRIVER_HISTORY_STATUSES = List.of(
+            TrackingStatus.DELIVERED.name(),
+            TrackingStatus.FAILED.name()
+    );
 
     private final PackageTrackingRepository packageTrackingRepository;
     private final TrackingHistoryRepository trackingHistoryRepository;
+    private final DeliveryProofRepository deliveryProofRepository;
+    private final FailedDeliveryRepository failedDeliveryRepository;
+    private final PendingDriverAssignmentRepository pendingDriverAssignmentRepository;
     private final TrackingUpdatedPublisher trackingUpdatedPublisher;
+    private final Clock clock;
 
     @Value("${warehouse.capacity}")
     private long warehouseCapacity;
+
+    @Value("${app.timezone:Asia/Colombo}")
+    private String appTimezone;
+
+    @Value("${app.source-event-timezone:UTC}")
+    private String sourceEventTimezone;
 
     @Transactional
     public void handlePackageStored(PackageStoredEvent event) {
         validateEvent(event);
 
-        LocalDateTime eventTime = event.getStoredAt() != null ? event.getStoredAt() : LocalDateTime.now();
+        LocalDateTime eventTime = event.getStoredAt() != null ? event.getStoredAt() : now();
         packageTrackingRepository.findByOrderNumber(event.getOrderNumber())
                 .ifPresentOrElse(
                         existing -> handleExistingTracking(existing, event),
                         () -> createTracking(event, eventTime)
                 );
+        packageTrackingRepository.findByOrderNumber(event.getOrderNumber())
+                .ifPresent(this::applyPendingAssignmentIfPresent);
     }
 
     public TrackingResponse getTracking(String orderNumber) {
@@ -111,7 +157,7 @@ public class TrackingService {
 
         validateTransition(currentStatus, requestedStatus);
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = now();
         String location = isBlank(request.getLocation()) ? tracking.getCurrentLocation() : request.getLocation();
         String description = isBlank(request.getDescription())
                 ? defaultDescription(requestedStatus)
@@ -162,16 +208,16 @@ public class TrackingService {
 
         if (tracking == null) {
             log.warn(
-                    "Tracking record not yet available for route assignment: orderNumber={}, driverId={}",
+                    "Tracking record not yet available for route assignment; saving pending assignment: orderNumber={}, driverId={}",
                     event.getOrderNumber(),
                     event.getDriverId()
             );
-            return false;
+            savePendingAssignment(event);
+            return true;
         }
 
-        tracking.setAssignedDriverId(event.getDriverId());
-        tracking.setUpdatedAt(LocalDateTime.now());
-        packageTrackingRepository.save(tracking);
+        LocalDateTime assignmentTime = normalizeAssignmentTime(event.getGeneratedAt());
+        applyAssignmentFields(tracking, event, assignmentTime);
 
         TrackingUpdatedEvent notificationEvent = TrackingUpdatedEvent.builder()
                 .orderNumber(tracking.getOrderNumber())
@@ -198,16 +244,139 @@ public class TrackingService {
     }
 
     @Transactional(readOnly = true)
-    public List<WarehousePackageResponse> getDriverPackages(String driverId) {
+    public List<DriverPackageResponse> getDriverPackages(String driverId) {
+        if (isBlank(driverId)) {
+            throw new IllegalArgumentException("Driver ID is required");
+        }
+
+        LocalDate today = LocalDate.now(clock);
+        LocalDateTime start = today.atStartOfDay();
+        LocalDateTime end = today.plusDays(1).atStartOfDay();
+
+        return packageTrackingRepository
+                .findByAssignedDriverIdAndStatusInAndAssignmentTimeBetweenOrderByAssignmentTimeAsc(
+                        driverId,
+                        DRIVER_MANIFEST_STATUSES,
+                        start,
+                        end
+                )
+                .stream()
+                .map(this::toDriverPackageResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<DriverPackageResponse> getDriverHistory(String driverId) {
         if (isBlank(driverId)) {
             throw new IllegalArgumentException("Driver ID is required");
         }
 
         return packageTrackingRepository
-                .findByAssignedDriverIdOrderByUpdatedAtDesc(driverId)
+                .findTop50ByAssignedDriverIdAndStatusInOrderByUpdatedAtDesc(driverId, DRIVER_HISTORY_STATUSES)
                 .stream()
-                .map(this::toWarehousePackageResponse)
+                .map(this::toDriverPackageResponse)
                 .toList();
+    }
+
+    @Transactional
+    public TrackingResponse updateDriverStatus(String orderNumber, String driverId, DriverStatusUpdateRequest request) {
+        validateDriverId(driverId);
+        validateDriverStatusRequest(request);
+
+        PackageTracking tracking = findTracking(orderNumber);
+        verifyAssignedDriver(tracking, driverId);
+
+        TrackingStatus currentStatus = parseStatus(tracking.getStatus());
+        TrackingStatus requestedStatus = parseStatus(request.getStatus());
+
+        if (requestedStatus == TrackingStatus.DELIVERED) {
+            if (currentStatus != TrackingStatus.OUT_FOR_DELIVERY) {
+                throw new InvalidTrackingStatusException("Invalid driver tracking status transition: "
+                        + currentStatus + " -> " + requestedStatus);
+            }
+            if (!deliveryProofRepository.existsByOrderNumber(tracking.getOrderNumber())) {
+                throw new InvalidTrackingStatusException("Proof of Delivery is required before marking delivered");
+            }
+            return applyStatusUpdate(tracking, requestedStatus, request.getLocation(), "Package delivered successfully");
+        }
+
+        if (currentStatus == TrackingStatus.LOADED && requestedStatus == TrackingStatus.OUT_FOR_DELIVERY) {
+            return applyStatusUpdate(tracking, requestedStatus, request.getLocation(), "Driver started delivery");
+        }
+
+        if (currentStatus == TrackingStatus.OUT_FOR_DELIVERY && requestedStatus == TrackingStatus.FAILED) {
+            if (isBlank(request.getReason())) {
+                throw new InvalidTrackingStatusException("Failure reason is required");
+            }
+            LocalDateTime now = now();
+            failedDeliveryRepository.save(FailedDelivery.builder()
+                    .orderNumber(tracking.getOrderNumber())
+                    .driverId(driverId)
+                    .reason(request.getReason().trim())
+                    .note(trimToNull(request.getNote()))
+                    .location(trimToNull(request.getLocation()))
+                    .failedAt(now)
+                    .build());
+            String description = isBlank(request.getNote())
+                    ? "Delivery failed: " + request.getReason().trim()
+                    : "Delivery failed: " + request.getReason().trim() + " - " + request.getNote().trim();
+            return applyStatusUpdate(tracking, requestedStatus, request.getLocation(), description, now);
+        }
+
+        throw new InvalidTrackingStatusException("Invalid driver tracking status transition: "
+                + currentStatus + " -> " + requestedStatus);
+    }
+
+    @Transactional
+    public DeliveryProofResponse completeDelivery(
+            String orderNumber,
+            String driverId,
+            MultipartFile photo,
+            MultipartFile signature,
+            String note,
+            String location
+    ) {
+        validateDriverId(driverId);
+        validateProofFile(photo, "photo");
+        validateProofFile(signature, "signature");
+
+        PackageTracking tracking = findTracking(orderNumber);
+        verifyAssignedDriver(tracking, driverId);
+
+        TrackingStatus currentStatus = parseStatus(tracking.getStatus());
+        if (currentStatus != TrackingStatus.OUT_FOR_DELIVERY) {
+            throw new InvalidTrackingStatusException("Proof of Delivery requires OUT_FOR_DELIVERY status");
+        }
+
+        if (deliveryProofRepository.existsByOrderNumber(tracking.getOrderNumber())) {
+            throw new InvalidTrackingStatusException("Delivery proof already exists for order " + tracking.getOrderNumber());
+        }
+
+        LocalDateTime now = now();
+        DeliveryProof proof = DeliveryProof.builder()
+                .orderNumber(tracking.getOrderNumber())
+                .driverId(driverId)
+                .photo(readFileBytes(photo, "photo"))
+                .photoMediaType(photo.getContentType())
+                .signature(readFileBytes(signature, "signature"))
+                .signatureMediaType(signature.getContentType())
+                .note(trimToNull(note))
+                .location(trimToNull(location))
+                .submittedAt(now)
+                .build();
+        deliveryProofRepository.save(proof);
+
+        String description = isBlank(note)
+                ? "Package delivered successfully with proof of delivery"
+                : "Package delivered successfully with proof of delivery - " + note.trim();
+        applyStatusUpdate(tracking, TrackingStatus.DELIVERED, location, description, now);
+
+        return DeliveryProofResponse.builder()
+                .orderNumber(tracking.getOrderNumber())
+                .driverId(driverId)
+                .status(tracking.getStatus())
+                .submittedAt(now)
+                .build();
     }
 
     private void createTracking(PackageStoredEvent event, LocalDateTime eventTime) {
@@ -317,6 +486,146 @@ public class TrackingService {
                 .build();
     }
 
+    private void applyAssignmentFields(PackageTracking tracking, RouteGeneratedEvent event, LocalDateTime assignmentTime) {
+        tracking.setAssignedDriverId(event.getDriverId());
+        tracking.setRouteId(event.getRouteId());
+        tracking.setDriverName(event.getDriverName());
+        tracking.setVehicleId(event.getVehicleId());
+        tracking.setVehiclePlate(event.getVehiclePlate());
+        tracking.setStopSequence(event.getStopSequence());
+        tracking.setDistanceKm(event.getDistanceKm());
+        tracking.setDurationMinutes(event.getDurationMinutes());
+        tracking.setTrafficLevel(event.getTrafficLevel());
+        tracking.setAssignmentTime(assignmentTime);
+        tracking.setUpdatedAt(assignmentTime);
+        packageTrackingRepository.save(tracking);
+    }
+
+    private void savePendingAssignment(RouteGeneratedEvent event) {
+        pendingDriverAssignmentRepository.save(PendingDriverAssignment.builder()
+                .orderNumber(event.getOrderNumber())
+                .clientId(event.getClientId())
+                .driverId(event.getDriverId())
+                .routeId(event.getRouteId())
+                .driverName(event.getDriverName())
+                .vehicleId(event.getVehicleId())
+                .vehiclePlate(event.getVehiclePlate())
+                .stopSequence(event.getStopSequence())
+                .distanceKm(event.getDistanceKm())
+                .durationMinutes(event.getDurationMinutes())
+                .trafficLevel(event.getTrafficLevel())
+                .generatedAt(normalizeAssignmentTime(event.getGeneratedAt()))
+                .receivedAt(now())
+                .build());
+    }
+
+    private void applyPendingAssignmentIfPresent(PackageTracking tracking) {
+        pendingDriverAssignmentRepository.findById(tracking.getOrderNumber())
+                .ifPresent(pending -> {
+                    RouteGeneratedEvent event = RouteGeneratedEvent.builder()
+                            .orderNumber(pending.getOrderNumber())
+                            .clientId(pending.getClientId())
+                            .driverId(pending.getDriverId())
+                            .driverName(pending.getDriverName())
+                            .routeId(pending.getRouteId())
+                            .vehicleId(pending.getVehicleId())
+                            .vehiclePlate(pending.getVehiclePlate())
+                            .stopSequence(pending.getStopSequence())
+                            .distanceKm(pending.getDistanceKm())
+                            .durationMinutes(pending.getDurationMinutes())
+                            .trafficLevel(pending.getTrafficLevel())
+                            .generatedAt(pending.getGeneratedAt())
+                            .build();
+                    applyAssignmentFields(tracking, event, pending.getGeneratedAt());
+                    pendingDriverAssignmentRepository.delete(pending);
+                    log.info("Applied pending driver assignment for order {}", tracking.getOrderNumber());
+                });
+    }
+
+    private LocalDateTime normalizeAssignmentTime(LocalDateTime generatedAt) {
+        if (generatedAt == null) {
+            return now();
+        }
+
+        ZoneId sourceZone = ZoneId.of(sourceEventTimezone);
+        ZoneId applicationZone = clock.getZone();
+        return generatedAt.atZone(sourceZone)
+                .withZoneSameInstant(applicationZone)
+                .toLocalDateTime();
+    }
+
+    private LocalDateTime now() {
+        return LocalDateTime.now(clock);
+    }
+
+    private DriverPackageResponse toDriverPackageResponse(PackageTracking tracking) {
+        return DriverPackageResponse.builder()
+                .orderNumber(tracking.getOrderNumber())
+                .clientId(tracking.getClientId())
+                .packageId(tracking.getPackageId())
+                .status(tracking.getStatus())
+                .currentLocation(tracking.getCurrentLocation())
+                .updatedAt(tracking.getUpdatedAt())
+                .routeId(tracking.getRouteId())
+                .driverId(tracking.getAssignedDriverId())
+                .driverName(tracking.getDriverName())
+                .vehicleId(tracking.getVehicleId())
+                .vehiclePlate(tracking.getVehiclePlate())
+                .stopSequence(tracking.getStopSequence())
+                .distanceKm(tracking.getDistanceKm())
+                .durationMinutes(tracking.getDurationMinutes())
+                .trafficLevel(tracking.getTrafficLevel())
+                .assignmentTime(tracking.getAssignmentTime())
+                .build();
+    }
+
+    private TrackingResponse applyStatusUpdate(
+            PackageTracking tracking,
+            TrackingStatus requestedStatus,
+            String requestedLocation,
+            String description
+    ) {
+        return applyStatusUpdate(tracking, requestedStatus, requestedLocation, description, now());
+    }
+
+    private TrackingResponse applyStatusUpdate(
+            PackageTracking tracking,
+            TrackingStatus requestedStatus,
+            String requestedLocation,
+            String description,
+            LocalDateTime eventTime
+    ) {
+        String location = isBlank(requestedLocation) ? tracking.getCurrentLocation() : requestedLocation;
+
+        tracking.setStatus(requestedStatus.name());
+        tracking.setCurrentLocation(location);
+        tracking.setUpdatedAt(eventTime);
+        packageTrackingRepository.save(tracking);
+
+        TrackingHistory history = TrackingHistory.builder()
+                .orderNumber(tracking.getOrderNumber())
+                .packageId(tracking.getPackageId())
+                .status(requestedStatus.name())
+                .location(location)
+                .description(description)
+                .eventTime(eventTime)
+                .build();
+        trackingHistoryRepository.save(history);
+
+        TrackingUpdatedEvent event = TrackingUpdatedEvent.builder()
+                .orderNumber(tracking.getOrderNumber())
+                .clientId(tracking.getClientId())
+                .packageId(tracking.getPackageId())
+                .status(tracking.getStatus())
+                .location(tracking.getCurrentLocation())
+                .description(description)
+                .updatedAt(eventTime)
+                .build();
+        trackingUpdatedPublisher.publish(event);
+
+        return toTrackingResponse(tracking);
+    }
+
     private WarehouseActivityResponse toWarehouseActivityResponse(TrackingHistory history) {
         return WarehouseActivityResponse.builder()
                 .orderNumber(history.getOrderNumber())
@@ -371,6 +680,51 @@ public class TrackingService {
         if (request == null || isBlank(request.getStatus())) {
             throw new InvalidTrackingStatusException("Status is required");
         }
+    }
+
+    private void validateDriverStatusRequest(DriverStatusUpdateRequest request) {
+        if (request == null || isBlank(request.getStatus())) {
+            throw new InvalidTrackingStatusException("Status is required");
+        }
+    }
+
+    private void validateDriverId(String driverId) {
+        if (isBlank(driverId)) {
+            throw new DriverAccessDeniedException("Driver identity is required");
+        }
+    }
+
+    private void verifyAssignedDriver(PackageTracking tracking, String driverId) {
+        if (!Objects.equals(tracking.getAssignedDriverId(), driverId)) {
+            throw new DriverAccessDeniedException("Forbidden: Package is assigned to another driver");
+        }
+    }
+
+    private void validateProofFile(MultipartFile file, String fieldName) {
+        if (file == null || file.isEmpty()) {
+            throw new InvalidTrackingStatusException("Delivery proof " + fieldName + " is required");
+        }
+
+        if (file.getSize() > MAX_PROOF_FILE_BYTES) {
+            throw new InvalidTrackingStatusException("Delivery proof " + fieldName + " exceeds 5 MB");
+        }
+
+        String mediaType = file.getContentType();
+        if (isBlank(mediaType) || !ALLOWED_PROOF_MEDIA_TYPES.contains(mediaType.toLowerCase())) {
+            throw new InvalidTrackingStatusException("Delivery proof " + fieldName + " must be an image");
+        }
+    }
+
+    private byte[] readFileBytes(MultipartFile file, String fieldName) {
+        try {
+            return file.getBytes();
+        } catch (IOException exception) {
+            throw new InvalidTrackingStatusException("Unable to read delivery proof " + fieldName);
+        }
+    }
+
+    private String trimToNull(String value) {
+        return isBlank(value) ? null : value.trim();
     }
 
     private void validateEvent(PackageStoredEvent event) {

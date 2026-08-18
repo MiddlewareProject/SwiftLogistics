@@ -10,7 +10,6 @@ import org.springframework.web.servlet.function.HandlerFilterFunction;
 import org.springframework.web.servlet.function.HandlerFunction;
 import org.springframework.web.servlet.function.ServerRequest;
 import org.springframework.web.servlet.function.ServerResponse;
-import java.util.Optional;
 
 @Component
 public class JwtAuthenticationFilter implements HandlerFilterFunction<ServerResponse, ServerResponse> {
@@ -22,8 +21,10 @@ public class JwtAuthenticationFilter implements HandlerFilterFunction<ServerResp
     public ServerResponse filter(ServerRequest request, HandlerFunction<ServerResponse> next) throws Exception {
         String path = request.path();
         
-        // Skip validation for auth endpoints and public order status endpoint
-        if (path.startsWith("/api/auth/") || path.startsWith("/api/orders/status/")) {
+        // Skip validation only for genuinely public auth endpoints and public order status endpoint
+        if (path.equals("/api/auth/login")
+                || path.equals("/api/auth/register")
+                || path.startsWith("/api/orders/status/")) {
             return next.handle(request);
         }
 
@@ -46,6 +47,11 @@ public class JwtAuthenticationFilter implements HandlerFilterFunction<ServerResp
 
             // Mutate request to add user context in headers
             ServerRequest mutatedRequest = ServerRequest.from(request)
+                    .headers(headers -> {
+                        headers.remove("X-User-Id");
+                        headers.remove("X-User-Username");
+                        headers.remove("X-User-Role");
+                    })
                     .header("X-User-Id", String.valueOf(userId))
                     .header("X-User-Username", username)
                     .header("X-User-Role", role)

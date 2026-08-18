@@ -7,6 +7,7 @@ import com.swiftlogistics.order_service.dto.RegisterRequest;
 import com.swiftlogistics.order_service.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,7 +28,18 @@ public class AuthController {
 
     @PostMapping("/register-driver")
     public ResponseEntity<?> registerDriver(
+            @RequestHeader(value = "X-User-Role", required = false) String role,
             @Valid @RequestBody DriverRegisterRequest request) {
+
+        if (role == null || role.isBlank()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body("Unauthorized: Admin authentication is required");
+        }
+
+        if (!"ADMIN".equalsIgnoreCase(role)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Forbidden: Admin access required");
+        }
 
         try {
             return ResponseEntity.ok(

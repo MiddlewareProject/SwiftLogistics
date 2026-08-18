@@ -47,7 +47,13 @@ public class GatewayConfig {
         .before(uri(URI.create("http://wms-adapter:8085")))
         .build();
 
-    return orderRoutes.andOther(cmsRoutes).andOther(rosRoutes).andOther(trackingRoutes).andOther(wmsRoutes);
+    RouterFunction<ServerResponse> notificationRoutes = route("notification-service-route")
+        .route(RequestPredicates.path("/api/notifications/**"), http())
+        .filter(jwtAuthenticationFilter)
+        .before(uri(URI.create("http://notification-service:8086")))
+        .build();
+
+    return orderRoutes.andOther(cmsRoutes).andOther(rosRoutes).andOther(trackingRoutes).andOther(wmsRoutes).andOther(notificationRoutes);
     }
 
     @Bean

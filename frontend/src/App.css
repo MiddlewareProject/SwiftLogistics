@@ -2591,6 +2591,10 @@ body {
   gap: 24px;
 }
 
+.driver-detail-main .driver-portal {
+  gap: 20px;
+}
+
 .driver-header {
   display: flex;
   justify-content: space-between;
@@ -2602,6 +2606,11 @@ body {
   font-size: 30px;
   font-weight: 800;
   color: var(--text-main);
+}
+
+.driver-detail-main .driver-header h1 {
+  font-size: 24px;
+  font-weight: 700;
 }
 
 .driver-header p {
@@ -2914,6 +2923,483 @@ body {
 
 .driver-route-summary-row span:first-child {
   color: var(--text-muted);
+}
+
+.driver-app-shell {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: calc(100vh - 48px);
+  margin: -32px;
+  background: var(--bg-main);
+}
+
+.driver-app-sidebar {
+  background: #ffffff;
+  color: var(--text-main);
+  border-right: 1px solid var(--border);
+  padding: 20px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.driver-app-brand,
+.driver-app-header,
+.driver-avatar-card,
+.driver-card-title,
+.driver-route-progress {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.driver-app-brand {
+  padding: 0 12px 8px;
+}
+
+.driver-app-brand svg {
+  width: 30px;
+  height: 30px;
+  color: var(--primary);
+}
+
+.driver-app-brand strong,
+.driver-app-brand span {
+  display: block;
+}
+
+.driver-app-brand strong {
+  font-size: 20px;
+  color: var(--primary);
+}
+
+.driver-app-brand span,
+.driver-vehicle-card span,
+.driver-app-nav-item small {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.driver-app-nav {
+  display: grid;
+  gap: 4px;
+}
+
+.driver-app-nav-item,
+.driver-app-logout {
+  border: 0;
+  width: 100%;
+  border-radius: 8px;
+  padding: 9px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.driver-app-nav-item:hover,
+.driver-app-logout:hover {
+  background: var(--bg-main);
+  color: var(--text-main);
+}
+
+.driver-app-nav-item svg,
+.driver-app-logout svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.driver-app-nav-item.active {
+  background: var(--primary-light);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.driver-app-nav-item.disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.driver-app-nav-item.disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.driver-app-nav-item small {
+  margin-left: auto;
+}
+
+.driver-vehicle-card {
+  margin-top: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-inner);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+  color: var(--text-main);
+}
+
+.driver-vehicle-card svg {
+  width: 28px;
+  height: 28px;
+  color: var(--text-muted);
+}
+
+.driver-online-pill {
+  border: 1px solid var(--border);
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.driver-online-pill span {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: var(--status-completed);
+}
+
+.driver-app-logout {
+  color: var(--text-secondary);
+}
+
+.driver-app-main {
+  padding: 28px 32px;
+  min-width: 0;
+}
+
+.driver-app-header,
+.driver-card-title,
+.driver-route-progress {
+  justify-content: space-between;
+}
+
+.driver-app-header {
+  margin-bottom: 22px;
+}
+
+.driver-app-header h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0 0 6px;
+}
+
+.driver-app-header p,
+.driver-avatar-card span,
+.driver-next-card p,
+.driver-activity-row p {
+  color: var(--text-muted);
+}
+
+.driver-avatar-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.driver-avatar-card span {
+  display: block;
+  font-size: 12px;
+}
+
+.driver-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: var(--primary);
+  font-weight: 700;
+}
+
+.driver-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.driver-kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  grid-template-areas:
+    "label icon"
+    "value icon"
+    "period icon";
+  align-items: center;
+  column-gap: 14px;
+  row-gap: 2px;
+  box-shadow: var(--shadow-sm);
+  min-height: 104px;
+}
+
+.driver-kpi-card div {
+  grid-area: icon;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+}
+
+.driver-kpi-card svg {
+  width: 24px;
+  height: 24px;
+}
+
+.driver-kpi-card span,
+.driver-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.driver-kpi-card > span {
+  grid-area: label;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.driver-kpi-card strong {
+  grid-area: value;
+  font-size: 26px;
+  line-height: 1.2;
+  color: var(--text-main);
+  margin-top: 6px;
+  display: block;
+}
+
+.driver-kpi-card small {
+  grid-area: period;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.driver-kpi-card.blue div {
+  color: var(--primary);
+  background: var(--primary-light);
+}
+
+.driver-kpi-card.green div {
+  color: var(--status-completed);
+  background: var(--status-completed-bg);
+}
+
+.driver-kpi-card.amber div {
+  color: var(--status-pending);
+  background: var(--status-pending-bg);
+}
+
+.driver-kpi-card.red div {
+  color: var(--status-failed);
+  background: var(--status-failed-bg);
+}
+
+.driver-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 20px;
+  margin-bottom: 22px;
+}
+
+.driver-dashboard-grid.bottom {
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+}
+
+.driver-card-title {
+  margin-bottom: 16px;
+}
+
+.driver-card-title h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.driver-card-title > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.driver-route-card .route-map-container {
+  min-height: 240px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.driver-route-card.expanded .route-map-container {
+  min-height: 520px;
+}
+
+.driver-route-progress {
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.driver-route-progress div {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.driver-route-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--status-completed);
+}
+
+.driver-next-card {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.driver-next-card p,
+.driver-activity-row p {
+  margin: 0;
+}
+
+.driver-next-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.driver-next-actions .btn:last-child {
+  grid-column: 1 / -1;
+}
+
+.driver-table-wrap {
+  overflow-x: auto;
+}
+
+.driver-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.driver-table th,
+.driver-table td {
+  padding: 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.driver-table th {
+  color: var(--text-muted);
+  font-weight: 700;
+  background: var(--bg-main);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.driver-table tbody tr:hover {
+  background: var(--bg-main);
+}
+
+.driver-activity-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.driver-activity-row:last-child {
+  border-bottom: 0;
+}
+
+.driver-activity-row p {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.driver-profile-panel {
+  max-width: 760px;
+}
+
+@media (max-width: 980px) {
+  .driver-app-shell {
+    grid-template-columns: 1fr;
+    margin: -20px;
+  }
+
+  .driver-app-sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .driver-app-nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .driver-vehicle-card {
+    display: none;
+  }
+
+  .driver-kpi-grid,
+  .driver-dashboard-grid,
+  .driver-dashboard-grid.bottom {
+    grid-template-columns: 1fr;
+  }
+
+  .driver-app-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .driver-app-main {
+    padding: 16px;
+  }
+
+  .driver-app-nav {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .driver-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .driver-next-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* --- CLIENT TRACKING --- */
