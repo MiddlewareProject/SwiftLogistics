@@ -312,6 +312,21 @@ const mapBackendOrder = (order) => {
   };
 };
 
+const mergeClientTrackingStatus = (order, tracking) => {
+  if (!tracking?.status) {
+    return order;
+  }
+
+  const statusKey = normalizeStatusKey(tracking.status);
+  return {
+    ...order,
+    status: toWarehouseStatusLabel(statusKey),
+    statusKey,
+    currentLocation: tracking.currentLocation || order.currentLocation,
+    trackingHistory: tracking.history || order.trackingHistory
+  };
+};
+
 // Approximate town-centre coordinates for the Sri Lankan locations used in mock order addresses.
 // There is no geocoding service wired up, so routes resolve to the nearest known town centre.
 const CITY_COORDINATES = {
@@ -826,22 +841,32 @@ function App() {
       setOrders(mapped);
       setActiveTrackingOrder(mapped[0] || null);
 
-      // Enrich with real ROS-assigned driver/vehicle where a route has been generated
-      const routeResults = await Promise.all(
-        mapped.map((order) =>
-          fetch(`${API_BASE}/api/ros/routes/${order.id}`, { headers: authHeaders })
-            .then((res) => (res.ok ? res.json() : null))
-            .catch(() => null)
+      // Enrich with real tracking status and ROS-assigned driver/vehicle where available.
+      const [routeResults, trackingResults] = await Promise.all([
+        Promise.all(
+          mapped.map((order) =>
+            fetch(`${API_BASE}/api/ros/routes/${order.id}`, { headers: authHeaders })
+              .then((res) => (res.ok ? res.json() : null))
+              .catch(() => null)
+          )
+        ),
+        Promise.all(
+          mapped.map((order) =>
+            fetch(`${API_BASE}/api/tracking/${order.id}`, { headers: authHeaders })
+              .then((res) => (res.ok ? res.json() : null))
+              .catch(() => null)
+          )
         )
-      );
+      ]);
 
       if (cancelled) return;
 
       const enriched = mapped.map((order, index) => {
         const route = routeResults[index];
+        const trackedOrder = mergeClientTrackingStatus(order, trackingResults[index]);
         return route
-          ? { ...order, driver: route.driverName || 'Unassigned', vehicle: route.vehiclePlate || 'TBD' }
-          : order;
+          ? { ...trackedOrder, driver: route.driverName || 'Unassigned', vehicle: route.vehiclePlate || 'TBD' }
+          : trackedOrder;
       });
 
       setOrders(enriched);
@@ -2488,7 +2513,7 @@ function App() {
                           o.deliveryAddress.toLowerCase().includes(searchTerm.toLowerCase());
     
     if (statusFilter === 'All') return matchesSearch;
-    return matchesSearch && o.status.toLowerCase() === statusFilter.toLowerCase();
+    return matchesSearch && normalizeStatusKey(o.status) === normalizeStatusKey(statusFilter);
   });
 
   const sortedOrders = [...filteredOrders].sort((a, b) => {
@@ -3594,9 +3619,9 @@ function App() {
                               <td>{ord.priority}</td>
                               <td>
                                 <span className={`badge badge-${
-                                  ord.status === 'Delivered' ? 'completed' :
-                                  ord.status === 'Failed' ? 'failed' :
-                                  ord.status === 'Pending' ? 'pending' : 'transit'
+                                  normalizeStatusKey(ord.status) === 'DELIVERED' ? 'completed' :
+                                  ['FAILED', 'CANCELLED', 'CANCELED'].includes(normalizeStatusKey(ord.status)) ? 'failed' :
+                                  ['PENDING', 'WAREHOUSE'].includes(normalizeStatusKey(ord.status)) ? 'pending' : 'transit'
                                 }`}>
                                   {ord.status}
                                 </span>
