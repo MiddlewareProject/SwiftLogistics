@@ -1,10 +1,13 @@
 package com.swiftlogistics.tracking_service.model;
 
+import jakarta.persistence.Basic;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -14,12 +17,12 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "package_tracking")
+@Table(name = "delivery_proofs")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class PackageTracking {
+public class DeliveryProof {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -28,39 +31,28 @@ public class PackageTracking {
     private String orderNumber;
 
     @Column(nullable = false)
-    private Long clientId;
+    private String driverId;
+
+    @Lob
+    @Basic(fetch = FetchType.LAZY)
+    @Column(nullable = false)
+    private byte[] photo;
 
     @Column(nullable = false)
-    private String packageId;
+    private String photoMediaType;
 
-    private String assignedDriverId;
-
-    private String routeId;
-
-    private String driverName;
-
-    private String vehicleId;
-
-    private String vehiclePlate;
-
-    private Integer stopSequence;
-
-    private Double distanceKm;
-
-    private Integer durationMinutes;
-
-    private String trafficLevel;
-
-    private LocalDateTime assignmentTime;
+    @Lob
+    @Basic(fetch = FetchType.LAZY)
+    @Column(nullable = false)
+    private byte[] signature;
 
     @Column(nullable = false)
-    private String status;
+    private String signatureMediaType;
 
-    private String currentLocation;
+    private String note;
+
+    private String location;
 
     @Column(nullable = false)
-    private LocalDateTime createdAt;
-
-    @Column(nullable = false)
-    private LocalDateTime updatedAt;
+    private LocalDateTime submittedAt;
 }

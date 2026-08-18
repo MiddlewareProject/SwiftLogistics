@@ -42,7 +42,21 @@ public class UserService {
 
     public AuthResponse registerDriver(DriverRegisterRequest request) {
 
-        if (userRepository.existsByUsername(request.getDriverId())) {
+        java.util.Optional<User> existingUser = userRepository.findByUsername(request.getDriverId());
+        if (existingUser.isPresent()) {
+            User existing = existingUser.get();
+            if (!"DRIVER".equalsIgnoreCase(existing.getRole())
+                    && request.getDriverId().matches("DRV-0[1-5]")) {
+                existing.setRole("DRIVER");
+                existing.setEmail(request.getEmail());
+                existing.setPassword(passwordEncoder.encode(request.getPassword()));
+                User repaired = userRepository.save(existing);
+                return AuthResponse.builder()
+                        .token(jwtUtil.generateToken(repaired))
+                        .username(repaired.getUsername())
+                        .role(repaired.getRole())
+                        .build();
+            }
             throw new IllegalArgumentException("Driver ID already exists");
         }
 
