@@ -20,4 +20,6 @@ public class RosDashboardSnapshot {
     private List<RosEventLogEntry> recentEvents;
     private List<RouteResult> recentRoutes;
     private List<VehicleStatus> vehicleStatus;
+    private List<DriverInfo> drivers;
+    private List<GroupedRouteDto> groupedRoutes;
 }

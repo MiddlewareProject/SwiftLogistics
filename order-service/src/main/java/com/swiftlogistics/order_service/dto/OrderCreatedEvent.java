@@ -16,6 +16,7 @@ public class OrderCreatedEvent {
     private String description;
     private String senderAddress;
     private String recipientAddress;
+    private String receiverName;
     private Double weight;
     private String status;
     private LocalDateTime createdAt;

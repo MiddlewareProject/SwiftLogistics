@@ -1,5 +1,6 @@
 package com.swiftlogistics.CMS_Adapter.config;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.amqp.core.Binding;
@@ -20,7 +21,6 @@ public class RabbitMqConfig {
     public static final String ORDER_EXCHANGE = "order.exchange";
     public static final String ORDER_ROUTING_KEY = "order.created";
 
-    public static final String CMS_COMPLETED_QUEUE = "cms.completed.queue";
     public static final String CMS_COMPLETED_EXCHANGE = "cms.completed.exchange";
     public static final String CMS_COMPLETED_ROUTING_KEY = "cms.completed";
 
@@ -28,6 +28,9 @@ public class RabbitMqConfig {
     public ObjectMapper objectMapper() {
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
+        // Tolerate event fields added by other services (e.g. order-service adding a new
+        // field) instead of rejecting the whole message - see receiverName incident.
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         return objectMapper;
     }
 
@@ -49,22 +52,12 @@ public class RabbitMqConfig {
         return BindingBuilder.bind(orderCreatedQueue).to(orderExchange).with(ORDER_ROUTING_KEY);
     }
 
-    @Bean
-    public Queue cmsCompletedQueue() {
-        return new Queue(CMS_COMPLETED_QUEUE, true);
-    }
-
+    // No queue is bound to this exchange - nothing currently consumes CMSCompleted events.
+    // The exchange is kept so publishing doesn't error and a consumer can bind its own
+    // queue later without any change here.
     @Bean
     public TopicExchange cmsCompletedExchange() {
         return new TopicExchange(CMS_COMPLETED_EXCHANGE);
-    }
-
-    @Bean
-    public Binding cmsCompletedBinding(
-            @Qualifier("cmsCompletedQueue") Queue cmsCompletedQueue,
-            @Qualifier("cmsCompletedExchange") TopicExchange cmsCompletedExchange
-    ) {
-        return BindingBuilder.bind(cmsCompletedQueue).to(cmsCompletedExchange).with(CMS_COMPLETED_ROUTING_KEY);
     }
 
     @Bean

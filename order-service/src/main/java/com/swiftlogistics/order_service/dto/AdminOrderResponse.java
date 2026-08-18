@@ -1,4 +1,4 @@
-package com.swiftlogistics.CMS_Adapter.dto;
+package com.swiftlogistics.order_service.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -11,13 +11,13 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class OrderCreatedEvent {
+public class AdminOrderResponse {
+    private Long id;
     private String orderNumber;
-    private Long clientId;
+    private String clientUsername;
     private String description;
     private String senderAddress;
     private String recipientAddress;
-    private String receiverName;
     private Double weight;
     private String status;
     private LocalDateTime createdAt;

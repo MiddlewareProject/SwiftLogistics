@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import './App.css';
 
 const API_BASE = 'http://localhost:8080';
@@ -148,6 +150,15 @@ const BellIcon = () => (
   </svg>
 );
 
+const DriversIcon = () => (
+  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+  </svg>
+);
+
 const UserIcon = () => (
   <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -293,6 +304,237 @@ const mapBackendOrder = (order) => {
   };
 };
 
+// Approximate town-centre coordinates for the Sri Lankan locations used in mock order addresses.
+// There is no geocoding service wired up, so routes resolve to the nearest known town centre.
+const CITY_COORDINATES = {
+  colombo: [6.9271, 79.8612],
+  kandy: [7.2906, 80.6337],
+  galle: [6.0535, 80.2210],
+  matara: [5.9549, 80.5550],
+  jaffna: [9.6615, 80.0255],
+  trincomalee: [8.5874, 81.2152],
+  negombo: [7.2083, 79.8358],
+  kurunegala: [7.4863, 80.3623],
+  anuradhapura: [8.3114, 80.4037],
+  batticaloa: [7.7167, 81.7000],
+  ratnapura: [6.6828, 80.3992],
+  badulla: [6.9934, 81.0550],
+  'nuwara eliya': [6.9497, 80.7891],
+  gampaha: [7.0917, 80.0099],
+  kalutara: [6.5854, 79.9607],
+  polonnaruwa: [7.9403, 81.0188],
+  vavuniya: [8.7514, 80.4971],
+  ampara: [7.2975, 81.6747],
+  hambantota: [6.1246, 81.1185],
+  puttalam: [8.0362, 79.8283],
+  chilaw: [7.5765, 79.7958],
+  matale: [7.4675, 80.6234],
+  kegalle: [7.2513, 80.3464],
+  nugegoda: [6.8649, 79.8997],
+  moratuwa: [6.7730, 79.8816],
+  dehiwala: [6.8510, 79.8654],
+  maharagama: [6.8481, 79.9265],
+  kotte: [6.8905, 79.9016],
+  battaramulla: [6.8994, 79.9170],
+  malabe: [6.9057, 79.9634],
+  rajagiriya: [6.9095, 79.8969],
+  kaduwela: [6.9330, 79.9836],
+  wattala: [6.9890, 79.8926],
+  kelaniya: [6.9553, 79.9218],
+  kadawatha: [7.0008, 79.9515],
+  kottawa: [6.8408, 79.9633],
+  piliyandala: [6.8014, 79.9227],
+  boralesgamuwa: [6.8386, 79.9010],
+  homagama: [6.8442, 80.0021],
+  'ja-ela': [7.0744, 79.8917],
+  wellawatte: [6.8767, 79.8593],
+  kollupitiya: [6.9105, 79.8497]
+};
+
+const DEFAULT_CITY_COORDINATES = CITY_COORDINATES.colombo;
+
+const hashString = (value) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  return hash;
+};
+
+// Resolves a free-text address to real coordinates for its town, with a small deterministic
+// jitter so multiple addresses in the same town don't render as a single overlapping pin.
+const resolveAddressCoordinates = (address) => {
+  if (!address) return DEFAULT_CITY_COORDINATES;
+  const lower = address.toLowerCase();
+  const matchedCity = Object.keys(CITY_COORDINATES).find((city) => lower.includes(city));
+  const base = matchedCity ? CITY_COORDINATES[matchedCity] : DEFAULT_CITY_COORDINATES;
+  const hash = hashString(address);
+  const jitterLat = ((hash % 1000) / 1000 - 0.5) * 0.025;
+  const jitterLng = (((Math.abs(hash) >> 8) % 1000) / 1000 - 0.5) * 0.025;
+  return [base[0] + jitterLat, base[1] + jitterLng];
+};
+
+const ROUTE_MAP_COLORS = ['#2563eb', '#16a34a', '#f97316', '#db2777', '#7c3aed', '#0891b2', '#ca8a04'];
+
+// Fetches a real road-following path between two [lat, lng] points via OSRM's public
+// routing server (free, no API key). Falls back to a straight line if the request fails.
+const fetchRoadPath = async (from, to) => {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('routing request failed');
+    const data = await response.json();
+    const coordinates = data.routes?.[0]?.geometry?.coordinates;
+    if (!coordinates || coordinates.length < 2) throw new Error('no route geometry');
+    return coordinates.map(([lng, lat]) => [lat, lng]);
+  } catch {
+    return [from, to];
+  }
+};
+
+// Real interactive map (Leaflet + OpenStreetMap tiles) plotting pickup/delivery pins and a
+// route line for every route passed in, color-coded per order.
+// routes: [{ routeId, driverName, hubAddress, stops: [{ sequence, orderNumber, deliveryAddress }] }]
+const RouteOptimizationMap = ({ routes, selectedRouteId, onSelectRoute }) => {
+  const containerRef = useRef(null);
+  const mapRef = useRef(null);
+  const layerGroupRef = useRef(null);
+  const polylinesRef = useRef({});
+  const onSelectRouteRef = useRef(onSelectRoute);
+
+  useEffect(() => {
+    onSelectRouteRef.current = onSelectRoute;
+  }, [onSelectRoute]);
+
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return undefined;
+
+    const map = L.map(containerRef.current, { scrollWheelZoom: false }).setView([7.6, 80.7], 7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 18
+    }).addTo(map);
+
+    mapRef.current = map;
+    layerGroupRef.current = L.layerGroup().addTo(map);
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+      layerGroupRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const layerGroup = layerGroupRef.current;
+    if (!map || !layerGroup) return undefined;
+
+    let cancelled = false;
+
+    const draw = async () => {
+      layerGroup.clearLayers();
+      polylinesRef.current = {};
+      if (!routes.length) return;
+
+      const bounds = [];
+
+      for (let index = 0; index < routes.length; index += 1) {
+        const route = routes[index];
+        const color = ROUTE_MAP_COLORS[index % ROUTE_MAP_COLORS.length];
+        const hub = resolveAddressCoordinates(route.hubAddress);
+        const stopPoints = route.stops.map((stop) => ({
+          stop,
+          coords: resolveAddressCoordinates(stop.deliveryAddress)
+        }));
+        const waypoints = [hub, ...stopPoints.map((s) => s.coords)];
+
+        const legPaths = await Promise.all(
+          waypoints.slice(0, -1).map((point, i) => fetchRoadPath(point, waypoints[i + 1]))
+        );
+        if (cancelled) return;
+
+        const fullPath = legPaths.flat();
+
+        const polyline = L.polyline(fullPath, { color, weight: 4, opacity: 0.6 })
+          .addTo(layerGroup)
+          .on('click', () => onSelectRouteRef.current?.(route.routeId));
+        polylinesRef.current[route.routeId] = polyline;
+
+        const hubMarker = L.marker(hub, {
+          icon: L.divIcon({
+            className: 'route-map-pin-icon',
+            html: `<span style="background:${color}">H</span>`,
+            iconSize: [24, 24]
+          })
+        }).addTo(layerGroup).bindPopup(`<strong>${route.routeId}</strong><br/>Hub: ${route.hubAddress}`);
+        hubMarker.on('click', () => onSelectRouteRef.current?.(route.routeId));
+
+        stopPoints.forEach(({ stop, coords }) => {
+          const marker = L.marker(coords, {
+            icon: L.divIcon({
+              className: 'route-map-pin-icon',
+              html: `<span style="background:${color}">${stop.sequence}</span>`,
+              iconSize: [24, 24]
+            })
+          }).addTo(layerGroup).bindPopup(
+            `<strong>${stop.receiverName || stop.orderNumber}</strong><br/>${stop.orderNumber} · stop ${stop.sequence}<br/>Driver: ${route.driverName}<br/>${stop.deliveryAddress}`
+          );
+          marker.on('click', () => onSelectRouteRef.current?.(route.routeId));
+        });
+
+        bounds.push(...fullPath);
+      }
+
+      if (bounds.length && !cancelled) {
+        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+      }
+    };
+
+    draw();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [routes]);
+
+  useEffect(() => {
+    Object.entries(polylinesRef.current).forEach(([routeId, polyline]) => {
+      const isSelected = routeId === selectedRouteId;
+      polyline.setStyle({ weight: isSelected ? 6 : 4, opacity: isSelected ? 1 : 0.6 });
+      if (isSelected) {
+        polyline.bringToFront();
+      }
+    });
+  }, [selectedRouteId, routes]);
+
+  return <div ref={containerRef} className="route-optimization-map" />;
+};
+
+const RouteMapVisual = ({ pickupAddress, deliveryAddress }) => (
+  <div className="route-map">
+    <div className="route-map-track">
+      <div className="route-map-pin start"></div>
+      <div className="route-map-road">
+        <div className="route-map-vehicle">
+          <TruckIcon />
+        </div>
+      </div>
+      <div className="route-map-pin end"></div>
+    </div>
+    <div className="route-map-labels">
+      <div className="route-map-label">
+        <span className="route-map-label-tag">Pickup</span>
+        {pickupAddress || 'Not available'}
+      </div>
+      <div className="route-map-label end">
+        <span className="route-map-label-tag">Delivery</span>
+        {deliveryAddress || 'Not available'}
+      </div>
+    </div>
+  </div>
+);
+
 function App() {
   const [portalPathTab, setPortalPathTab] = useState(() => getPortalPathTab());
 
@@ -325,13 +567,24 @@ function App() {
     }
 
     const storedTab = readStoredValue(DASHBOARD_TAB_STORAGE_KEY, 'overview');
+    const storedUser = getStoredUser();
+
     if (storedTab === 'warehouse' || storedTab === 'driver') {
       return 'overview';
     }
+    if (storedTab === 'cms') {
+      return storedUser?.role === 'ADMIN' ? 'system-overview' : 'overview';
+    }
 
-    const storedUser = getStoredUser();
-    if ((storedTab === 'cms' || storedTab === 'routes') && storedUser?.role !== 'ADMIN') {
+    const isAdminOnlyTab = storedTab === 'routes' || storedTab === 'drivers' || storedTab === 'vehicles'
+      || storedTab === 'system-overview' || storedTab === 'admin-users' || storedTab === 'admin-orders';
+    const isClientOnlyTab = storedTab === 'overview' || storedTab === 'create' || storedTab === 'history' || storedTab === 'tracking';
+
+    if (isAdminOnlyTab && storedUser?.role !== 'ADMIN') {
       return 'overview';
+    }
+    if (isClientOnlyTab && storedUser?.role === 'ADMIN') {
+      return 'system-overview';
     }
     return storedTab;
   });
@@ -408,9 +661,10 @@ function App() {
   const [retryingOrderNumber, setRetryingOrderNumber] = useState(null);
   const [cmsRetryError, setCmsRetryError] = useState('');
   const [rosDashboard, setRosDashboard] = useState(null);
-  const [rosLatestRoute, setRosLatestRoute] = useState(null);
   const [rosLoading, setRosLoading] = useState(false);
   const [rosError, setRosError] = useState('');
+  const [selectedRosRouteId, setSelectedRosRouteId] = useState(null);
+  const [loadedOrderNumbers, setLoadedOrderNumbers] = useState(() => new Set());
   const [warehouseDashboard, setWarehouseDashboard] = useState(null);
   const [warehouseLoading, setWarehouseLoading] = useState(false);
   const [warehouseError, setWarehouseError] = useState('');
@@ -423,6 +677,32 @@ function App() {
   const [warehouseLoadLocation, setWarehouseLoadLocation] = useState('');
   const [warehouseLoadSubmitting, setWarehouseLoadSubmitting] = useState(false);
   const [warehouseLoadError, setWarehouseLoadError] = useState('');
+  const [systemOverview, setSystemOverview] = useState(null);
+  const [systemStatus, setSystemStatus] = useState(null);
+  const [systemCmsStatus, setSystemCmsStatus] = useState(null);
+  const [systemRosStatus, setSystemRosStatus] = useState(null);
+  const [systemWmsStatus, setSystemWmsStatus] = useState(null);
+  const [systemTrackingStats, setSystemTrackingStats] = useState(null);
+  const [systemRosDrivers, setSystemRosDrivers] = useState([]);
+  const [systemOverviewLoading, setSystemOverviewLoading] = useState(false);
+  const [systemOverviewError, setSystemOverviewError] = useState('');
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminUsersLoading, setAdminUsersLoading] = useState(false);
+  const [adminUsersError, setAdminUsersError] = useState('');
+  const [adminOrders, setAdminOrders] = useState([]);
+  const [adminOrdersLoading, setAdminOrdersLoading] = useState(false);
+  const [adminOrdersError, setAdminOrdersError] = useState('');
+  const [newDriverName, setNewDriverName] = useState('');
+  const [newDriverEmail, setNewDriverEmail] = useState('');
+  const [newDriverPassword, setNewDriverPassword] = useState('');
+  const [addDriverSubmitting, setAddDriverSubmitting] = useState(false);
+  const [addDriverError, setAddDriverError] = useState('');
+  const [addDriverSuccess, setAddDriverSuccess] = useState('');
+  const [newVehiclePlate, setNewVehiclePlate] = useState('');
+  const [newVehicleType, setNewVehicleType] = useState('');
+  const [addVehicleSubmitting, setAddVehicleSubmitting] = useState(false);
+  const [addVehicleError, setAddVehicleError] = useState('');
+  const [addVehicleSuccess, setAddVehicleSuccess] = useState('');
   const [driverVerified, setDriverVerified] = useState(() => readSessionValue(DRIVER_VERIFIED_SESSION_KEY) === 'true');
   const [driverId, setDriverId] = useState(() => readSessionValue(DRIVER_ID_SESSION_KEY));
   const [driverLoginId, setDriverLoginId] = useState('');
@@ -434,6 +714,7 @@ function App() {
   const [selectedDelivery, setSelectedDelivery] = useState(null);
   const [selectedDeliveryTracking, setSelectedDeliveryTracking] = useState(null);
   const [selectedDeliveryOrder, setSelectedDeliveryOrder] = useState(null);
+  const [selectedDeliveryRoute, setSelectedDeliveryRoute] = useState(null);
   const [selectedDeliveryLoading, setSelectedDeliveryLoading] = useState(false);
   const [selectedDeliveryError, setSelectedDeliveryError] = useState('');
   const [deliveryActionLoading, setDeliveryActionLoading] = useState('');
@@ -519,18 +800,40 @@ function App() {
     }
 
     let cancelled = false;
+    const authHeaders = { Authorization: `Bearer ${user.token}` };
 
-    fetch(`${API_BASE}/api/orders/history`, {
-      headers: { Authorization: `Bearer ${user.token}` }
-    })
-      .then((response) => (response.ok ? response.json() : []))
-      .then((data) => {
-        if (cancelled) return;
-        const mapped = data.map(mapBackendOrder);
-        setOrders(mapped);
-        setActiveTrackingOrder(mapped[0] || null);
-      })
-      .catch(() => {});
+    const loadOrderHistory = async () => {
+      const response = await fetch(`${API_BASE}/api/orders/history`, { headers: authHeaders });
+      const data = response.ok ? await response.json() : [];
+      if (cancelled) return;
+
+      const mapped = data.map(mapBackendOrder);
+      setOrders(mapped);
+      setActiveTrackingOrder(mapped[0] || null);
+
+      // Enrich with real ROS-assigned driver/vehicle where a route has been generated
+      const routeResults = await Promise.all(
+        mapped.map((order) =>
+          fetch(`${API_BASE}/api/ros/routes/${order.id}`, { headers: authHeaders })
+            .then((res) => (res.ok ? res.json() : null))
+            .catch(() => null)
+        )
+      );
+
+      if (cancelled) return;
+
+      const enriched = mapped.map((order, index) => {
+        const route = routeResults[index];
+        return route
+          ? { ...order, driver: route.driverName || 'Unassigned', vehicle: route.vehiclePlate || 'TBD' }
+          : order;
+      });
+
+      setOrders(enriched);
+      setActiveTrackingOrder((prev) => enriched.find((o) => o.id === prev?.id) || enriched[0] || null);
+    };
+
+    loadOrderHistory().catch(() => {});
 
     return () => {
       cancelled = true;
@@ -638,7 +941,7 @@ function App() {
   };
 
   useEffect(() => {
-    if (dashboardTab !== 'routes') {
+    if (dashboardTab !== 'routes' && dashboardTab !== 'drivers' && dashboardTab !== 'vehicles') {
       return;
     }
 
@@ -663,20 +966,25 @@ function App() {
 
         setRosDashboard(dashboardData);
 
-        const latestResponse = await fetch(`${API_BASE}/api/ros/latest`, { headers: authHeaders });
-        if (latestResponse.ok) {
-          const latestData = await latestResponse.json();
-          if (!cancelled) {
-            setRosLatestRoute(latestData);
+        if (dashboardTab === 'routes') {
+          const trackingResponse = await fetch(`${API_BASE}/api/tracking/dashboard`, { headers: authHeaders });
+          if (trackingResponse.ok) {
+            const trackingData = await trackingResponse.json();
+            if (!cancelled) {
+              const loadedNumbers = (trackingData?.packages ?? [])
+                .filter((pkg) => pkg.status === 'LOADED')
+                .map((pkg) => pkg.orderNumber);
+              setLoadedOrderNumbers(new Set(loadedNumbers));
+            }
+          } else if (!cancelled) {
+            setLoadedOrderNumbers(new Set());
           }
-        } else if (!cancelled) {
-          setRosLatestRoute(null);
         }
       } catch (error) {
         if (!cancelled) {
           setRosError(error.message || 'Unable to load Route Optimization dashboard');
           setRosDashboard(null);
-          setRosLatestRoute(null);
+          setLoadedOrderNumbers(new Set());
         }
       } finally {
         if (!cancelled) {
@@ -691,6 +999,262 @@ function App() {
       cancelled = true;
     };
   }, [dashboardTab, user]);
+
+  useEffect(() => {
+    if (dashboardTab !== 'system-overview' || !user?.token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSystemOverview = async () => {
+      setSystemOverviewLoading(true);
+      setSystemOverviewError('');
+
+      const authHeaders = { Authorization: `Bearer ${user.token}` };
+
+      const fetchText = async (url) => {
+        try {
+          const response = await fetch(url, { headers: authHeaders });
+          return response.ok ? (await response.text()).trim() : 'DOWN';
+        } catch {
+          return 'DOWN';
+        }
+      };
+
+      const fetchJson = async (url) => {
+        try {
+          const response = await fetch(url, { headers: authHeaders });
+          return response.ok ? await response.json() : null;
+        } catch {
+          return null;
+        }
+      };
+
+      try {
+        const [stats, status, cmsStatus, rosStatus, wmsStatusData, trackingDashboard, rosDashboardData] = await Promise.all([
+          fetchJson(`${API_BASE}/api/orders/admin/stats`),
+          fetchJson(`${API_BASE}/api/gateway/system-status`),
+          fetchText('http://localhost:8083/api/cms/status'),
+          fetchText(`${API_BASE}/api/ros/status`),
+          fetchJson(`${API_BASE}/api/wms/status`),
+          fetchJson(`${API_BASE}/api/tracking/dashboard`),
+          fetchJson(`${API_BASE}/api/ros/dashboard`)
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setSystemOverview(stats);
+        setSystemStatus(status);
+        setSystemCmsStatus(cmsStatus === 'Connected' ? 'UP' : 'DOWN');
+        setSystemRosStatus(rosStatus === 'Connected' ? 'UP' : 'DOWN');
+        setSystemWmsStatus(wmsStatusData?.status === 'ONLINE' ? 'UP' : 'DOWN');
+        setSystemTrackingStats(trackingDashboard?.stats || null);
+        setSystemRosDrivers(rosDashboardData?.drivers || []);
+      } catch (error) {
+        if (!cancelled) {
+          setSystemOverviewError(error.message || 'Unable to load system overview');
+        }
+      } finally {
+        if (!cancelled) {
+          setSystemOverviewLoading(false);
+        }
+      }
+    };
+
+    loadSystemOverview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, user]);
+
+  useEffect(() => {
+    if (dashboardTab !== 'admin-users' || !user?.token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadAdminUsers = async () => {
+      setAdminUsersLoading(true);
+      setAdminUsersError('');
+
+      try {
+        const response = await fetch(`${API_BASE}/api/orders/admin/users`, {
+          headers: { Authorization: `Bearer ${user.token}` }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Request failed with ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          setAdminUsers(data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAdminUsersError(error.message || 'Unable to load users');
+        }
+      } finally {
+        if (!cancelled) {
+          setAdminUsersLoading(false);
+        }
+      }
+    };
+
+    loadAdminUsers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, user]);
+
+  useEffect(() => {
+    if (dashboardTab !== 'admin-orders' || !user?.token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadAdminOrders = async () => {
+      setAdminOrdersLoading(true);
+      setAdminOrdersError('');
+
+      try {
+        const response = await fetch(`${API_BASE}/api/orders/admin/orders`, {
+          headers: { Authorization: `Bearer ${user.token}` }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Request failed with ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          setAdminOrders(data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAdminOrdersError(error.message || 'Unable to load orders');
+        }
+      } finally {
+        if (!cancelled) {
+          setAdminOrdersLoading(false);
+        }
+      }
+    };
+
+    loadAdminOrders();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardTab, user]);
+
+  const handleAddDriver = async (e) => {
+    e.preventDefault();
+    if (!newDriverName.trim() || !newDriverEmail.trim() || !newDriverPassword.trim()) {
+      setAddDriverError('Please fill out all fields.');
+      return;
+    }
+
+    setAddDriverSubmitting(true);
+    setAddDriverError('');
+    setAddDriverSuccess('');
+
+    const driverIdToAdd = nextDriverId;
+
+    try {
+      const rosResponse = await fetch(`${API_BASE}/api/ros/drivers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
+        body: JSON.stringify({ driverId: driverIdToAdd, name: newDriverName.trim() })
+      });
+
+      if (!rosResponse.ok) {
+        throw new Error(await rosResponse.text() || 'Unable to add driver to route pool');
+      }
+
+      const authResponse = await fetch(`${API_BASE}/api/auth/register-driver`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driverId: driverIdToAdd,
+          email: newDriverEmail.trim(),
+          password: newDriverPassword
+        })
+      });
+
+      if (!authResponse.ok) {
+        throw new Error(await authResponse.text() || 'Driver added to route pool, but login account creation failed');
+      }
+
+      setAddDriverSuccess(`Driver ${newDriverName.trim()} (${driverIdToAdd}) added successfully.`);
+      setNewDriverName('');
+      setNewDriverEmail('');
+      setNewDriverPassword('');
+
+      const dashboardResponse = await fetch(`${API_BASE}/api/ros/dashboard`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      if (dashboardResponse.ok) {
+        setRosDashboard(await dashboardResponse.json());
+      }
+    } catch (error) {
+      setAddDriverError(error.message || 'Unable to add driver');
+    } finally {
+      setAddDriverSubmitting(false);
+    }
+  };
+
+  const handleAddVehicle = async (e) => {
+    e.preventDefault();
+    if (!newVehiclePlate.trim() || !newVehicleType.trim()) {
+      setAddVehicleError('Please fill out all fields.');
+      return;
+    }
+
+    setAddVehicleSubmitting(true);
+    setAddVehicleError('');
+    setAddVehicleSuccess('');
+
+    const vehicleIdToAdd = nextVehicleId;
+
+    try {
+      const rosResponse = await fetch(`${API_BASE}/api/ros/vehicles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
+        body: JSON.stringify({
+          vehicleId: vehicleIdToAdd,
+          vehiclePlate: newVehiclePlate.trim(),
+          vehicleType: newVehicleType.trim()
+        })
+      });
+
+      if (!rosResponse.ok) {
+        throw new Error(await rosResponse.text() || 'Unable to add vehicle to fleet');
+      }
+
+      setAddVehicleSuccess(`Vehicle ${newVehicleType.trim()} (${vehicleIdToAdd}) added successfully.`);
+      setNewVehiclePlate('');
+      setNewVehicleType('');
+
+      const dashboardResponse = await fetch(`${API_BASE}/api/ros/dashboard`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      if (dashboardResponse.ok) {
+        setRosDashboard(await dashboardResponse.json());
+      }
+    } catch (error) {
+      setAddVehicleError(error.message || 'Unable to add vehicle');
+    } finally {
+      setAddVehicleSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (dashboardTab !== 'warehouse' || !user?.token) {
@@ -852,12 +1416,14 @@ function App() {
       setSelectedDeliveryError('');
       setSelectedDeliveryTracking(null);
       setSelectedDeliveryOrder(null);
+      setSelectedDeliveryRoute(null);
 
       try {
         const authHeaders = { Authorization: `Bearer ${user.token}` };
-        const [trackingResponse, orderResponse] = await Promise.all([
+        const [trackingResponse, orderResponse, routeResponse] = await Promise.all([
           fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}`, { headers: authHeaders }),
-          fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders })
+          fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders }),
+          fetch(`${API_BASE}/api/ros/routes/${selectedDelivery.orderNumber}`, { headers: authHeaders })
         ]);
 
         if (!trackingResponse.ok) {
@@ -866,10 +1432,12 @@ function App() {
 
         const trackingData = await trackingResponse.json();
         const orderData = orderResponse.ok ? await orderResponse.json() : null;
+        const routeData = routeResponse.ok ? await routeResponse.json() : null;
 
         if (!cancelled) {
           setSelectedDeliveryTracking(trackingData);
           setSelectedDeliveryOrder(orderData);
+          setSelectedDeliveryRoute(routeData);
         }
       } catch (error) {
         if (!cancelled) {
@@ -962,19 +1530,88 @@ function App() {
     };
   }, [podPhotoPreviewUrl]);
 
+  const rosEventLog = rosDashboard?.recentEvents ?? [];
+  const rosRouteQueue = rosDashboard?.recentRoutes ?? [];
+  const rosGroupedRoutes = rosDashboard?.groupedRoutes ?? [];
+  // Route Optimization only shows stops for orders currently marked Loaded at the warehouse.
+  const visibleGroupedRoutes = rosGroupedRoutes
+    .map((route) => {
+      const loadedStops = route.stops.filter((stop) => loadedOrderNumbers.has(stop.orderNumber));
+      if (loadedStops.length === 0) return null;
+      const lastStop = loadedStops[loadedStops.length - 1];
+      return {
+        ...route,
+        stops: loadedStops,
+        totalDistanceKm: lastStop.cumulativeDistanceKm,
+        totalDurationMinutes: lastStop.cumulativeDurationMinutes
+      };
+    })
+    .filter(Boolean);
+  const rosVehicleStatus = rosDashboard?.vehicleStatus ?? [];
+  const rosDrivers = rosDashboard?.drivers ?? [];
+  const rosConnected = rosDashboard?.connected ?? false;
+
+  const rosActiveVehicleCount = rosVehicleStatus.filter((v) => v.status === 'EN_ROUTE').length;
+  const rosActiveDriverCount = rosDrivers.filter((d) => d.status === 'ON_ROUTE').length;
+  const rosActiveRouteCount = rosGroupedRoutes.filter((r) => r.active).length;
+
   const rosSummaryMetrics = rosDashboard
     ? [
         { label: 'Routes Generated', value: String(rosDashboard.routesGenerated), tone: 'primary' },
-        { label: 'Vehicles', value: String(rosDashboard.vehicleCount), tone: 'completed' },
-        { label: 'Drivers', value: String(rosDashboard.driverCount), tone: 'completed' },
-        { label: 'Optimization Time', value: `${((rosDashboard.avgOptimizationTimeMs ?? 0) / 1000).toFixed(2)}s`, tone: 'pending' }
+        { label: 'Active Routes', value: String(rosActiveRouteCount), tone: 'primary' },
+        { label: 'Vehicles Active', value: `${rosActiveVehicleCount}/${rosDashboard.vehicleCount}`, tone: 'completed' },
+        { label: 'Drivers Assigned', value: `${rosActiveDriverCount}/${rosDashboard.driverCount}`, tone: 'completed' }
       ]
     : [];
 
-  const rosEventLog = rosDashboard?.recentEvents ?? [];
-  const rosRouteQueue = rosDashboard?.recentRoutes ?? [];
-  const rosVehicleStatus = rosDashboard?.vehicleStatus ?? [];
-  const rosConnected = rosDashboard?.connected ?? false;
+  const selectedRosRoute = visibleGroupedRoutes.find((route) => route.routeId === selectedRosRouteId)
+    || visibleGroupedRoutes[0]
+    || null;
+
+  const nextDriverId = (() => {
+    const existingNumbers = (rosDashboard?.drivers ?? [])
+      .map((driver) => parseInt(driver.driverId.replace(/^DRV-/, ''), 10))
+      .filter((number) => !Number.isNaN(number));
+    const nextNumber = (existingNumbers.length ? Math.max(...existingNumbers) : 0) + 1;
+    return `DRV-${String(nextNumber).padStart(2, '0')}`;
+  })();
+
+  const nextVehicleId = (() => {
+    const existingNumbers = (rosDashboard?.vehicleStatus ?? [])
+      .map((vehicle) => parseInt(vehicle.vehicleId.replace(/^VEH-/, ''), 10))
+      .filter((number) => !Number.isNaN(number));
+    const nextNumber = (existingNumbers.length ? Math.max(...existingNumbers) : 0) + 1;
+    return `VEH-${String(nextNumber).padStart(2, '0')}`;
+  })();
+
+  const systemStatusCards = [
+    { label: 'Users', value: String(systemOverview?.totalUsers ?? 0), tone: 'primary' },
+    { label: 'Orders', value: String(systemOverview?.totalOrders ?? 0), tone: 'primary' },
+    { label: 'Drivers', value: String(systemOverview?.totalDrivers ?? 0), tone: 'primary' },
+    { label: 'CMS Status', value: systemCmsStatus || 'UNKNOWN', tone: systemCmsStatus === 'UP' ? 'completed' : 'failed' },
+    { label: 'ROS Status', value: systemRosStatus || 'UNKNOWN', tone: systemRosStatus === 'UP' ? 'completed' : 'failed' },
+    { label: 'WMS Status', value: systemWmsStatus || 'UNKNOWN', tone: systemWmsStatus === 'UP' ? 'completed' : 'failed' },
+    { label: 'RabbitMQ Status', value: systemStatus?.rabbitmqStatus || 'UNKNOWN', tone: systemStatus?.rabbitmqStatus === 'UP' ? 'completed' : 'failed' },
+    { label: 'Gateway Status', value: systemStatus?.gatewayStatus || 'UNKNOWN', tone: systemStatus?.gatewayStatus === 'UP' ? 'completed' : 'failed' }
+  ];
+
+  const dailyOrdersChart = systemOverview?.dailyOrders ?? [];
+  const dailyOrdersMax = Math.max(1, ...dailyOrdersChart.map((day) => day.count));
+
+  const deliveredCount = systemTrackingStats?.delivered ?? 0;
+  const failedCount = systemTrackingStats?.failed ?? 0;
+  const deliveryOutcomeMax = Math.max(1, deliveredCount, failedCount);
+
+  const activeDriversCount = systemRosDrivers.filter((driver) => driver.status === 'ON_ROUTE').length;
+  const totalDriversForChart = Math.max(1, systemRosDrivers.length);
+
+  const integrationHealthItems = [
+    { label: 'CMS', status: systemCmsStatus },
+    { label: 'ROS', status: systemRosStatus },
+    { label: 'WMS', status: systemWmsStatus },
+    { label: 'RabbitMQ', status: systemStatus?.rabbitmqStatus },
+    { label: 'Gateway', status: systemStatus?.gatewayStatus }
+  ];
 
   const cmsSummaryMetrics = cmsDashboard
     ? [
@@ -1038,6 +1675,19 @@ function App() {
   const deliveryProgress = getDeliveryProgress(currentDeliveryStatus);
   const mapAddress = selectedOrderInfo.recipientAddress || selectedOrderInfo.deliveryAddress;
   const mapsHref = mapAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapAddress)}` : '';
+  const driverPreviewPickup = selectedOrderInfo.senderAddress || selectedOrderInfo.pickupAddress;
+  const driverPreviewRoutes = driverPreviewPickup && mapAddress
+    ? [{
+        routeId: selectedDeliveryRoute?.routeId || selectedDeliveryRoute?.orderNumber || selectedDelivery?.orderNumber || '',
+        hubAddress: driverPreviewPickup,
+        driverName: selectedDeliveryRoute?.driverName || 'Assigned driver',
+        stops: [{
+          sequence: selectedDeliveryRoute?.stopSequence || 1,
+          orderNumber: selectedDeliveryRoute?.orderNumber || selectedDelivery?.orderNumber || '',
+          deliveryAddress: mapAddress
+        }]
+      }]
+    : [];
   const bestDeliveryLocation = mapAddress
     || selectedDeliveryTracking?.currentLocation
     || selectedDelivery?.currentLocation
@@ -1098,7 +1748,7 @@ function App() {
         token: auth.token
       });
       setCurrentScreen('dashboard');
-      setDashboardTab(portalPathTab || 'overview');
+      setDashboardTab(portalPathTab || (auth.role === 'ADMIN' ? 'system-overview' : 'overview'));
     } catch (error) {
       setLoginError(error.message || 'Unable to sign in. Please try again.');
     } finally {
@@ -2238,52 +2888,92 @@ function App() {
             </div>
 
             <ul className="sidebar-menu">
-              <li>
-                <div 
-                  className={`sidebar-item ${dashboardTab === 'overview' ? 'active' : ''}`}
-                  onClick={() => setDashboardTab('overview')}
-                >
-                  <DashboardIcon />
-                  <span>Dashboard</span>
-                </div>
-              </li>
-              <li>
-                <div 
-                  className={`sidebar-item ${dashboardTab === 'create' ? 'active' : ''}`}
-                  onClick={() => setDashboardTab('create')}
-                >
-                  <PlusCircleIcon />
-                  <span>Create Order</span>
-                </div>
-              </li>
-              <li>
-                <div 
-                  className={`sidebar-item ${dashboardTab === 'history' ? 'active' : ''}`}
-                  onClick={() => setDashboardTab('history')}
-                >
-                  <HistoryIcon />
-                  <span>Order History</span>
-                </div>
-              </li>
-              <li>
-                <div 
-                  className={`sidebar-item ${dashboardTab === 'tracking' ? 'active' : ''}`}
-                  onClick={() => setDashboardTab('tracking')}
-                >
-                  <TrackingIcon />
-                  <span>Live Tracking</span>
-                </div>
-              </li>
-              
+              {user?.role !== 'ADMIN' && (
+                <>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'overview' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('overview')}
+                    >
+                      <DashboardIcon />
+                      <span>Dashboard</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'create' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('create')}
+                    >
+                      <PlusCircleIcon />
+                      <span>Create Order</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'history' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('history')}
+                    >
+                      <HistoryIcon />
+                      <span>Order History</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'tracking' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('tracking')}
+                    >
+                      <TrackingIcon />
+                      <span>Live Tracking</span>
+                    </div>
+                  </li>
+                </>
+              )}
+
               {user?.role === 'ADMIN' && (
                 <>
                   <li>
                     <div
-                      className={`sidebar-item ${dashboardTab === 'cms' ? 'active' : ''}`}
-                      onClick={() => setDashboardTab('cms')}
+                      className={`sidebar-item ${dashboardTab === 'system-overview' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('system-overview')}
                     >
-                      <CmsIcon />
-                      <span>CMS Integration</span>
+                      <DashboardIcon />
+                      <span>System Overview</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'admin-users' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('admin-users')}
+                    >
+                      <UserIcon />
+                      <span>Users</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'admin-orders' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('admin-orders')}
+                    >
+                      <HistoryIcon />
+                      <span>Orders</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'drivers' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('drivers')}
+                    >
+                      <DriversIcon />
+                      <span>Drivers</span>
+                    </div>
+                  </li>
+                  <li>
+                    <div
+                      className={`sidebar-item ${dashboardTab === 'vehicles' ? 'active' : ''}`}
+                      onClick={() => setDashboardTab('vehicles')}
+                    >
+                      <TruckIcon />
+                      <span>Vehicles</span>
                     </div>
                   </li>
                   <li>
@@ -3343,11 +4033,43 @@ function App() {
                       <div className="driver-side-stack">
                         <div className="card driver-map-card">
                           <div className="cms-preview-label">Route Preview</div>
-                          <div className="driver-map-placeholder">
-                            <div className="driver-map-node">Warehouse</div>
-                            <div className="driver-map-path"></div>
-                            <div className="driver-map-node destination">{mapAddress || 'Recipient address unavailable'}</div>
-                          </div>
+                          {driverPreviewRoutes.length > 0 ? (
+                            <RouteOptimizationMap routes={driverPreviewRoutes} />
+                          ) : (
+                            <RouteMapVisual
+                              pickupAddress={driverPreviewPickup}
+                              deliveryAddress={mapAddress}
+                            />
+                          )}
+
+                          {selectedDeliveryRoute ? (
+                            <div className="driver-route-summary">
+                              <div className="driver-route-summary-row">
+                                <span>Distance</span>
+                                <strong>{selectedDeliveryRoute.distanceKm} km</strong>
+                              </div>
+                              <div className="driver-route-summary-row">
+                                <span>Est. Duration</span>
+                                <strong>{selectedDeliveryRoute.durationMinutes} min</strong>
+                              </div>
+                              <div className="driver-route-summary-row">
+                                <span>Traffic</span>
+                                <span className={`badge ${
+                                  selectedDeliveryRoute.trafficLevel === 'LOW' ? 'badge-completed' :
+                                  selectedDeliveryRoute.trafficLevel === 'HIGH' ? 'badge-failed' : 'badge-pending'
+                                }`}>{selectedDeliveryRoute.trafficLevel}</span>
+                              </div>
+                              <div className="driver-route-summary-row">
+                                <span>Vehicle</span>
+                                <strong>{selectedDeliveryRoute.vehiclePlate} ({selectedDeliveryRoute.vehicleType})</strong>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="driver-disabled-note" style={{ margin: '4px 0 14px' }}>
+                              Optimized route details aren't available for this order right now.
+                            </p>
+                          )}
+
                           {mapsHref ? (
                             <a href={mapsHref} target="_blank" rel="noreferrer" className="btn btn-secondary driver-wide-button">
                               Open in Maps
@@ -3608,11 +4330,10 @@ function App() {
                           <div className="cms-preview-label">Last Known Location</div>
                           <h3>{clientTracking.currentLocation || 'Not available'}</h3>
                           <p>Exact GPS coordinates are not available from the current tracking backend.</p>
-                          <div className="driver-map-placeholder client-map-placeholder">
-                            <div className="driver-map-node">{clientTracking.currentLocation || 'Latest location unavailable'}</div>
-                            <div className="driver-map-path"></div>
-                            <div className="driver-map-node destination">{clientTrackingDestination || 'Destination not available'}</div>
-                          </div>
+                          <RouteMapVisual
+                            pickupAddress={clientTracking.currentLocation || 'Latest location unavailable'}
+                            deliveryAddress={clientTrackingDestination}
+                          />
                           {clientTrackingMapsHref ? (
                             <a href={clientTrackingMapsHref} target="_blank" rel="noreferrer" className="btn btn-secondary driver-wide-button">
                               Open Destination in Maps
@@ -3856,6 +4577,134 @@ function App() {
               </div>
             )}
 
+            {/* TAB: SYSTEM OVERVIEW (staff/admin only) */}
+            {user?.role === 'ADMIN' && dashboardTab === 'system-overview' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">System Overview</h1>
+                    <p className="screen-subtitle">Live counts, integration health, and delivery trends across the whole middleware</p>
+                  </div>
+                </header>
+
+                <div className="cms-dashboard">
+                  {systemOverviewLoading && <div className="card" style={{ marginBottom: '4px' }}>Loading system overview...</div>}
+                  {systemOverviewError && <div className="card" style={{ marginBottom: '4px', color: 'var(--status-failed)' }}>{systemOverviewError}</div>}
+
+                  <div className="stats-grid cms-stats-grid">
+                    {systemStatusCards.map((metric) => (
+                      <div className="card stat-card cms-stat-card" key={metric.label}>
+                        <div className="stat-info">
+                          <h4>{metric.label}</h4>
+                          <p className="stat-val">{metric.value}</p>
+                        </div>
+                        <div className={`stat-icon-wrapper cms-stat-tone ${metric.tone}`}>
+                          <DashboardIcon />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="cms-layout">
+                    <div className="cms-main-column">
+                      <div className="card cms-panel">
+                        <div className="cms-panel-header">
+                          <div>
+                            <h3>Daily Orders</h3>
+                            <p>Orders placed per day, last 7 days</p>
+                          </div>
+                        </div>
+
+                        <div className="system-bar-chart">
+                          {dailyOrdersChart.map((day) => (
+                            <div className="system-bar-chart-col" key={day.date}>
+                              <span className="system-bar-chart-value">{day.count}</span>
+                              <div
+                                className="system-bar-chart-bar"
+                                style={{ height: `${Math.max(4, (day.count / dailyOrdersMax) * 100)}%` }}
+                              ></div>
+                              <span className="system-bar-chart-label">{day.date.slice(5)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="card cms-panel" style={{ marginTop: '20px' }}>
+                        <div className="cms-panel-header">
+                          <div>
+                            <h3>Completed vs Failed Deliveries</h3>
+                            <p>Totals from the Tracking Service</p>
+                          </div>
+                        </div>
+
+                        <div className="system-compare-chart">
+                          <div className="system-compare-row">
+                            <span className="system-compare-label">Completed</span>
+                            <div className="system-compare-track">
+                              <div
+                                className="system-compare-fill completed"
+                                style={{ width: `${(deliveredCount / deliveryOutcomeMax) * 100}%` }}
+                              ></div>
+                            </div>
+                            <span className="system-compare-value">{deliveredCount}</span>
+                          </div>
+                          <div className="system-compare-row">
+                            <span className="system-compare-label">Failed</span>
+                            <div className="system-compare-track">
+                              <div
+                                className="system-compare-fill failed"
+                                style={{ width: `${(failedCount / deliveryOutcomeMax) * 100}%` }}
+                              ></div>
+                            </div>
+                            <span className="system-compare-value">{failedCount}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="card cms-panel" style={{ marginTop: '20px' }}>
+                        <div className="cms-panel-header">
+                          <div>
+                            <h3>Active Drivers</h3>
+                            <p>Drivers currently on a route vs. total fleet</p>
+                          </div>
+                        </div>
+
+                        <div className="system-compare-chart">
+                          <div className="system-compare-row">
+                            <span className="system-compare-label">On Route</span>
+                            <div className="system-compare-track">
+                              <div
+                                className="system-compare-fill completed"
+                                style={{ width: `${(activeDriversCount / totalDriversForChart) * 100}%` }}
+                              ></div>
+                            </div>
+                            <span className="system-compare-value">{activeDriversCount} / {systemRosDrivers.length}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="cms-side-column">
+                      <div className="card cms-status-card">
+                        <div className="cms-preview-label">Integration Health</div>
+                        <div className="system-health-list">
+                          {integrationHealthItems.map((item) => (
+                            <div className="system-health-row" key={item.label}>
+                              <span className={`cms-status-dot ${item.status === 'UP' ? 'connected' : 'disconnected'}`}></span>
+                              <span>{item.label}</span>
+                              <span className={`badge ${item.status === 'UP' ? 'badge-completed' : 'badge-failed'}`}>
+                                {item.status || 'UNKNOWN'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* TAB 5: CMS INTEGRATION (staff/admin only) */}
             {user?.role === 'ADMIN' && dashboardTab === 'cms' && (
               <div>
@@ -4037,62 +4886,157 @@ function App() {
                       <div className="card cms-panel">
                         <div className="cms-panel-header">
                           <div>
-                            <h3>Optimized Route</h3>
-                            <p>Map visualization, delivery sequence, and driver assignment for the latest generated route</p>
+                            <h3>Route Map Overview</h3>
+                            <p>Multi-stop routes for every order currently marked Loaded and awaiting dispatch, grouped by driver and delivery region</p>
                           </div>
                           <span className={`badge ${rosConnected ? 'badge-completed' : 'badge-failed'}`}>{rosConnected ? 'Connected' : 'Disconnected'}</span>
                         </div>
 
-                        {rosLatestRoute ? (
-                          <>
-                            <div className="ros-route-path">
-                              <div className="ros-route-stop">
-                                <span className="ros-route-stop-label">{rosLatestRoute.pickupAddress}</span>
-                                <span className="ros-route-stop-dot"></span>
-                              </div>
-                              <div className="ros-route-line"></div>
-                              <div className="ros-route-stop">
-                                <span className="ros-route-stop-label">{rosLatestRoute.deliveryAddress}</span>
-                                <span className="ros-route-stop-dot"></span>
-                              </div>
-                            </div>
-
-                            <div className="cms-preview-grid">
-                              <div className="cms-preview-card">
-                                <div className="cms-preview-label">Delivery Sequence</div>
-                                <pre>{`1. Pickup — ${rosLatestRoute.pickupAddress}\n2. Deliver — ${rosLatestRoute.deliveryAddress}`}</pre>
-                              </div>
-                              <div className="cms-preview-card">
-                                <div className="cms-preview-label">Driver Assignment</div>
-                                <pre>{`Driver: ${rosLatestRoute.driverName}\nVehicle: ${rosLatestRoute.vehiclePlate} (${rosLatestRoute.vehicleType})`}</pre>
-                              </div>
-                            </div>
-
-                            <div className="cms-response-panel">
-                              <div className="cms-preview-label">Route Summary</div>
-                              <div className="cms-response-message">
-                                <strong>
-                                  Traffic:{' '}
-                                  <span className={`badge ${
-                                    rosLatestRoute.trafficLevel === 'LOW' ? 'badge-completed' :
-                                    rosLatestRoute.trafficLevel === 'HIGH' ? 'badge-failed' : 'badge-pending'
-                                  }`}>{rosLatestRoute.trafficLevel}</span>
-                                </strong>
-                                <span>
-                                  {rosLatestRoute.distanceKm} km · {rosLatestRoute.durationMinutes} min estimated ·
-                                  optimized in {rosLatestRoute.optimizationTimeMs} ms for order {rosLatestRoute.orderNumber}
-                                </span>
-                              </div>
-                            </div>
-                          </>
+                        {visibleGroupedRoutes.length > 0 ? (
+                          <RouteOptimizationMap
+                            routes={visibleGroupedRoutes}
+                            selectedRouteId={selectedRosRoute?.routeId}
+                            onSelectRoute={setSelectedRosRouteId}
+                          />
                         ) : (
                           <div className="cms-response-panel">
-                            <div className="cms-preview-label">Route Summary</div>
+                            <div className="cms-preview-label">Route Map Overview</div>
                             <div className="cms-response-message">
-                              <span>No route generated yet.</span>
+                              <span>No loaded orders awaiting dispatch right now.</span>
                             </div>
                           </div>
                         )}
+                      </div>
+
+                      {selectedRosRoute && (
+                        <div className="card route-details-card">
+                          <div className="route-details-header">
+                            <div className="route-details-header-title">
+                              <span className="cms-preview-label">Route Details</span>
+                              <select
+                                className="order-select route-details-select"
+                                value={selectedRosRoute.routeId}
+                                onChange={(e) => setSelectedRosRouteId(e.target.value)}
+                              >
+                                {visibleGroupedRoutes.map((route) => (
+                                  <option key={route.routeId} value={route.routeId}>{route.routeId}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <span className={`badge ${selectedRosRoute.active ? 'badge-completed' : 'badge-pending'}`}>
+                              {selectedRosRoute.active ? 'Active' : 'Complete'}
+                            </span>
+                          </div>
+
+                          <div className="route-details-grid">
+                            <div className="route-details-column">
+                              <div className="route-details-label">Driver</div>
+                              <div className="route-details-person">
+                                <div className="route-details-avatar">
+                                  {(selectedRosRoute.driverName || 'D').split(' ').map((n) => n[0]).join('').toUpperCase()}
+                                </div>
+                                <div>
+                                  <strong>{selectedRosRoute.driverName}</strong>
+                                  <div className="route-details-muted">{selectedRosRoute.driverId}</div>
+                                </div>
+                              </div>
+
+                              <div className="route-details-label" style={{ marginTop: '18px' }}>Vehicle</div>
+                              <div className="route-details-person">
+                                <div className="route-details-vehicle-icon"><TruckIcon /></div>
+                                <div>
+                                  <strong>{selectedRosRoute.vehicleType}</strong>
+                                  <div className="route-details-muted">{selectedRosRoute.vehiclePlate} · {selectedRosRoute.vehicleId}</div>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="route-details-column">
+                              <div className="route-details-stat-row"><span>Total Stops</span><strong>{selectedRosRoute.stops.length}</strong></div>
+                              <div className="route-details-stat-row"><span>Total Distance</span><strong>{selectedRosRoute.totalDistanceKm} km</strong></div>
+                              <div className="route-details-stat-row"><span>Total Time</span><strong>{selectedRosRoute.totalDurationMinutes} min</strong></div>
+                              <div className="route-details-stat-row">
+                                <span>Traffic</span>
+                                <span className={`badge ${
+                                  selectedRosRoute.trafficLevel === 'LOW' ? 'badge-completed' :
+                                  selectedRosRoute.trafficLevel === 'HIGH' ? 'badge-failed' : 'badge-pending'
+                                }`}>{selectedRosRoute.trafficLevel}</span>
+                              </div>
+                              <div className="route-details-stat-row"><span>Hub / Pickup</span><strong style={{ textAlign: 'right', fontWeight: 600, fontSize: '12px' }}>{selectedRosRoute.hubAddress}</strong></div>
+                            </div>
+                          </div>
+
+                          <div className="cms-preview-label" style={{ marginTop: '20px', marginBottom: '10px' }}>Delivery Sequence</div>
+                          <div>
+                            {selectedRosRoute.stops.map((stop) => (
+                              <div className="route-map-order-badge-row" key={stop.orderNumber} style={{ cursor: 'default' }}>
+                                <span
+                                  className="route-map-order-badge"
+                                  style={{ background: ROUTE_MAP_COLORS[visibleGroupedRoutes.indexOf(selectedRosRoute) % ROUTE_MAP_COLORS.length] }}
+                                >
+                                  {stop.sequence}
+                                </span>
+                                <span style={{ flex: 1 }}>
+                                  <strong>{stop.receiverName || stop.orderNumber}</strong>
+                                  <div className="route-details-muted">{stop.orderNumber} · {stop.deliveryAddress}</div>
+                                </span>
+                                <span className="route-details-muted">{stop.cumulativeDistanceKm} km · {stop.cumulativeDurationMinutes} min</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="card cms-retry-card">
+                        <div className="cms-panel-header compact">
+                          <div>
+                            <h3>Today's Routes</h3>
+                            <p>Routes covering orders currently Loaded and awaiting dispatch</p>
+                          </div>
+                        </div>
+
+                        <div className="cms-retry-table-wrap">
+                          <table className="cms-retry-table">
+                            <thead>
+                              <tr>
+                                <th>Route ID</th>
+                                <th>Driver</th>
+                                <th>Vehicle</th>
+                                <th>Stops</th>
+                                <th>Distance</th>
+                                <th>Time</th>
+                                <th>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {visibleGroupedRoutes.length === 0 ? (
+                                <tr>
+                                  <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No loaded orders awaiting dispatch right now.</td>
+                                </tr>
+                              ) : (
+                                visibleGroupedRoutes.map((route) => (
+                                  <tr
+                                    key={route.routeId}
+                                    onClick={() => setSelectedRosRouteId(route.routeId)}
+                                    style={{ cursor: 'pointer', backgroundColor: route.routeId === selectedRosRoute?.routeId ? 'rgba(37, 99, 235, 0.06)' : undefined }}
+                                  >
+                                    <td>{route.routeId}</td>
+                                    <td>{route.driverName}</td>
+                                    <td>{route.vehiclePlate}</td>
+                                    <td>{route.stops.length}</td>
+                                    <td>{route.totalDistanceKm} km</td>
+                                    <td>{route.totalDurationMinutes} min</td>
+                                    <td>
+                                      <span className={`badge ${route.active ? 'badge-transit' : 'badge-completed'}`}>
+                                        {route.active ? 'Active' : 'Complete'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
 
@@ -4192,6 +5136,357 @@ function App() {
                           </table>
                         </div>
                       </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: DRIVERS (staff/admin only) */}
+            {user?.role === 'ADMIN' && dashboardTab === 'drivers' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">Drivers</h1>
+                    <p className="screen-subtitle">Fleet driver roster and current availability from the ROS bridge</p>
+                  </div>
+                </header>
+
+                <div className="cms-dashboard">
+                  {rosLoading && <div className="card" style={{ marginBottom: '4px' }}>Loading driver data...</div>}
+                  {rosError && <div className="card" style={{ marginBottom: '4px', color: 'var(--status-failed)' }}>{rosError}</div>}
+
+                  <div className="cms-layout">
+                    <div className="cms-main-column">
+                      <div className="card cms-retry-card">
+                        <div className="cms-panel-header compact">
+                          <div>
+                            <h3>Driver Roster</h3>
+                            <p>{rosDashboard?.drivers?.length ?? 0} drivers registered</p>
+                          </div>
+                        </div>
+
+                        <div className="cms-retry-table-wrap">
+                          <table className="cms-retry-table">
+                            <thead>
+                              <tr>
+                                <th>Driver ID</th>
+                                <th>Name</th>
+                                <th>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(rosDashboard?.drivers ?? []).length === 0 ? (
+                                <tr>
+                                  <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No driver data yet.</td>
+                                </tr>
+                              ) : (
+                                rosDashboard.drivers.map((driver) => (
+                                  <tr key={driver.driverId}>
+                                    <td>{driver.driverId}</td>
+                                    <td>{driver.name}</td>
+                                    <td>
+                                      <span className={`badge ${driver.status === 'AVAILABLE' ? 'badge-completed' : 'badge-transit'}`}>
+                                        {driver.status === 'AVAILABLE' ? 'Available' : 'On Route'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="cms-side-column">
+                      <div className="card cms-status-card">
+                        <div className="cms-preview-label">Add Driver</div>
+                        <p style={{ marginBottom: '16px' }}>Creates a fleet entry (for route assignment) and a login account.</p>
+
+                        {addDriverError && <div className="error-message" style={{ marginBottom: '12px' }}>⚠️ {addDriverError}</div>}
+                        {addDriverSuccess && <div className="card" style={{ marginBottom: '12px', color: 'var(--status-completed)' }}>{addDriverSuccess}</div>}
+
+                        <form onSubmit={handleAddDriver} autoComplete="off">
+                          <div className="order-form-group" style={{ marginBottom: '12px' }}>
+                            <label>Driver ID</label>
+                            <div className="order-input" style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--bg-inner)' }}>
+                              {nextDriverId} <span style={{ fontSize: '12px' }}>(auto-generated)</span>
+                            </div>
+                          </div>
+                          <div className="order-form-group" style={{ marginBottom: '12px' }}>
+                            <label htmlFor="new-driver-name">Full Name</label>
+                            <input
+                              type="text"
+                              id="new-driver-name"
+                              className="order-input"
+                              placeholder="e.g. Dilan Jayawardena"
+                              value={newDriverName}
+                              onChange={(e) => setNewDriverName(e.target.value)}
+                              required
+                            />
+                          </div>
+                          <div className="order-form-group" style={{ marginBottom: '12px' }}>
+                            <label htmlFor="new-driver-email">Email</label>
+                            <input
+                              type="email"
+                              id="new-driver-email"
+                              className="order-input"
+                              placeholder="driver6@swiftlogistics.com"
+                              value={newDriverEmail}
+                              onChange={(e) => setNewDriverEmail(e.target.value)}
+                              required
+                            />
+                          </div>
+                          <div className="order-form-group" style={{ marginBottom: '16px' }}>
+                            <label htmlFor="new-driver-password">Password</label>
+                            <input
+                              type="password"
+                              id="new-driver-password"
+                              className="order-input"
+                              placeholder="••••••••"
+                              value={newDriverPassword}
+                              onChange={(e) => setNewDriverPassword(e.target.value)}
+                              required
+                            />
+                          </div>
+                          <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={addDriverSubmitting}>
+                            {addDriverSubmitting ? 'Adding Driver...' : 'Add Driver'}
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: VEHICLES (staff/admin only) */}
+            {user?.role === 'ADMIN' && dashboardTab === 'vehicles' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">Vehicles</h1>
+                    <p className="screen-subtitle">Fleet vehicle roster and current availability from the ROS bridge</p>
+                  </div>
+                </header>
+
+                <div className="cms-dashboard">
+                  {rosLoading && <div className="card" style={{ marginBottom: '4px' }}>Loading vehicle data...</div>}
+                  {rosError && <div className="card" style={{ marginBottom: '4px', color: 'var(--status-failed)' }}>{rosError}</div>}
+
+                  <div className="cms-layout">
+                    <div className="cms-main-column">
+                      <div className="card cms-retry-card">
+                        <div className="cms-panel-header compact">
+                          <div>
+                            <h3>Vehicle Roster</h3>
+                            <p>{rosDashboard?.vehicleStatus?.length ?? 0} vehicles registered</p>
+                          </div>
+                        </div>
+
+                        <div className="cms-retry-table-wrap">
+                          <table className="cms-retry-table">
+                            <thead>
+                              <tr>
+                                <th>Vehicle ID</th>
+                                <th>Plate</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rosVehicleStatus.length === 0 ? (
+                                <tr>
+                                  <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No vehicle data yet.</td>
+                                </tr>
+                              ) : (
+                                rosVehicleStatus.map((vehicle) => (
+                                  <tr key={vehicle.vehicleId}>
+                                    <td>{vehicle.vehicleId}</td>
+                                    <td>{vehicle.vehiclePlate}</td>
+                                    <td>{vehicle.vehicleType}</td>
+                                    <td>
+                                      <span className={`badge ${
+                                        vehicle.status === 'IDLE' ? 'badge-pending' :
+                                        vehicle.status === 'MAINTENANCE' ? 'badge-failed' : 'badge-transit'
+                                      }`}>{vehicle.status}</span>
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="cms-side-column">
+                      <div className="card cms-status-card">
+                        <div className="cms-preview-label">Add Vehicle</div>
+                        <p style={{ marginBottom: '16px' }}>Adds a new vehicle to the fleet pool for route assignment.</p>
+
+                        {addVehicleError && <div className="error-message" style={{ marginBottom: '12px' }}>⚠️ {addVehicleError}</div>}
+                        {addVehicleSuccess && <div className="card" style={{ marginBottom: '12px', color: 'var(--status-completed)' }}>{addVehicleSuccess}</div>}
+
+                        <form onSubmit={handleAddVehicle} autoComplete="off">
+                          <div className="order-form-group" style={{ marginBottom: '12px' }}>
+                            <label>Vehicle ID</label>
+                            <div className="order-input" style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--bg-inner)' }}>
+                              {nextVehicleId} <span style={{ fontSize: '12px' }}>(auto-generated)</span>
+                            </div>
+                          </div>
+                          <div className="order-form-group" style={{ marginBottom: '12px' }}>
+                            <label htmlFor="new-vehicle-plate">Plate Number</label>
+                            <input
+                              type="text"
+                              id="new-vehicle-plate"
+                              className="order-input"
+                              placeholder="e.g. TRK-670"
+                              value={newVehiclePlate}
+                              onChange={(e) => setNewVehiclePlate(e.target.value)}
+                              required
+                            />
+                          </div>
+                          <div className="order-form-group" style={{ marginBottom: '16px' }}>
+                            <label htmlFor="new-vehicle-type">Vehicle Type</label>
+                            <input
+                              type="text"
+                              id="new-vehicle-type"
+                              className="order-input"
+                              placeholder="e.g. Isuzu NPR Truck"
+                              value={newVehicleType}
+                              onChange={(e) => setNewVehicleType(e.target.value)}
+                              required
+                            />
+                          </div>
+                          <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={addVehicleSubmitting}>
+                            {addVehicleSubmitting ? 'Adding Vehicle...' : 'Add Vehicle'}
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: ADMIN USERS */}
+            {user?.role === 'ADMIN' && dashboardTab === 'admin-users' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">Users</h1>
+                    <p className="screen-subtitle">All registered accounts across the platform</p>
+                  </div>
+                </header>
+
+                <div className="cms-dashboard">
+                  {adminUsersLoading && <div className="card" style={{ marginBottom: '4px' }}>Loading users...</div>}
+                  {adminUsersError && <div className="card" style={{ marginBottom: '4px', color: 'var(--status-failed)' }}>{adminUsersError}</div>}
+
+                  <div className="card cms-retry-card">
+                    <div className="cms-panel-header compact">
+                      <div>
+                        <h3>All Users</h3>
+                        <p>{adminUsers.length} accounts registered</p>
+                      </div>
+                    </div>
+
+                    <div className="cms-retry-table-wrap">
+                      <table className="cms-retry-table">
+                        <thead>
+                          <tr>
+                            <th>ID</th>
+                            <th>Username / Email</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adminUsers.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No users found.</td>
+                            </tr>
+                          ) : (
+                            adminUsers.map((accountRow) => (
+                              <tr key={accountRow.id}>
+                                <td>{accountRow.id}</td>
+                                <td>{accountRow.username}</td>
+                                <td>{accountRow.email}</td>
+                                <td>
+                                  <span className={`badge ${
+                                    accountRow.role === 'ADMIN' ? 'badge-completed' :
+                                    accountRow.role === 'DRIVER' ? 'badge-transit' : 'badge-pending'
+                                  }`}>{accountRow.role}</span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: ADMIN ORDERS */}
+            {user?.role === 'ADMIN' && dashboardTab === 'admin-orders' && (
+              <div>
+                <header className="screen-header">
+                  <div>
+                    <h1 className="screen-title">Orders</h1>
+                    <p className="screen-subtitle">All orders placed across the platform, newest first</p>
+                  </div>
+                </header>
+
+                <div className="cms-dashboard">
+                  {adminOrdersLoading && <div className="card" style={{ marginBottom: '4px' }}>Loading orders...</div>}
+                  {adminOrdersError && <div className="card" style={{ marginBottom: '4px', color: 'var(--status-failed)' }}>{adminOrdersError}</div>}
+
+                  <div className="card cms-retry-card">
+                    <div className="cms-panel-header compact">
+                      <div>
+                        <h3>All Orders</h3>
+                        <p>{adminOrders.length} orders placed</p>
+                      </div>
+                    </div>
+
+                    <div className="cms-retry-table-wrap">
+                      <table className="cms-retry-table">
+                        <thead>
+                          <tr>
+                            <th>Order ID</th>
+                            <th>Client</th>
+                            <th>Destination</th>
+                            <th>Weight</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adminOrders.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No orders found.</td>
+                            </tr>
+                          ) : (
+                            adminOrders.map((orderRow) => (
+                              <tr key={orderRow.id}>
+                                <td>{orderRow.orderNumber}</td>
+                                <td>{orderRow.clientUsername}</td>
+                                <td>{orderRow.recipientAddress}</td>
+                                <td>{orderRow.weight} kg</td>
+                                <td>
+                                  <span className={`badge ${
+                                    orderRow.status === 'DELIVERED' ? 'badge-completed' :
+                                    orderRow.status === 'FAILED' ? 'badge-failed' : 'badge-pending'
+                                  }`}>{toDisplayStatus(orderRow.status)}</span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </div>

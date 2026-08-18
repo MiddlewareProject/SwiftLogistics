@@ -1,5 +1,6 @@
 package com.swiftlogistics.ROS_Adapter.config;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.amqp.core.Binding;
@@ -23,7 +24,6 @@ public class RabbitMqConfig {
     public static final String ORDER_EXCHANGE = "order.exchange";
     public static final String ORDER_ROUTING_KEY = "order.created";
 
-    public static final String ROUTE_GENERATED_QUEUE = "route.generated.queue";
     public static final String ROUTE_GENERATED_EXCHANGE = "route.generated.exchange";
     public static final String ROUTE_GENERATED_ROUTING_KEY = "route.generated";
 
@@ -31,6 +31,9 @@ public class RabbitMqConfig {
     public ObjectMapper objectMapper() {
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
+        // Tolerate event fields added by other services instead of rejecting the whole
+        // message - see receiverName incident.
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         return objectMapper;
     }
 
@@ -52,22 +55,12 @@ public class RabbitMqConfig {
         return BindingBuilder.bind(orderCreatedQueue).to(orderExchange).with(ORDER_ROUTING_KEY);
     }
 
-    @Bean
-    public Queue routeGeneratedQueue() {
-        return new Queue(ROUTE_GENERATED_QUEUE, true);
-    }
-
+    // No queue of ROS_Adapter's own is bound to this exchange - tracking-service consumes
+    // RouteGenerated events via its own dedicated "tracking.route.generated.queue" instead.
+    // The exchange is kept so publishing doesn't error.
     @Bean
     public TopicExchange routeGeneratedExchange() {
         return new TopicExchange(ROUTE_GENERATED_EXCHANGE);
-    }
-
-    @Bean
-    public Binding routeGeneratedBinding(
-            @Qualifier("routeGeneratedQueue") Queue routeGeneratedQueue,
-            @Qualifier("routeGeneratedExchange") TopicExchange routeGeneratedExchange
-    ) {
-        return BindingBuilder.bind(routeGeneratedQueue).to(routeGeneratedExchange).with(ROUTE_GENERATED_ROUTING_KEY);
     }
 
     @Bean

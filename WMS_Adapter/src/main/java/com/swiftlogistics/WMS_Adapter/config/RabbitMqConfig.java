@@ -1,5 +1,6 @@
 package com.swiftlogistics.WMS_Adapter.config;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.amqp.core.Binding;
@@ -27,6 +28,9 @@ public class RabbitMqConfig {
     public ObjectMapper objectMapper() {
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
+        // Tolerate event fields added by other services instead of rejecting the whole
+        // message - see receiverName incident.
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         return objectMapper;
     }
 

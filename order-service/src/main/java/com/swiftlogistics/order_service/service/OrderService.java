@@ -52,6 +52,7 @@ public class OrderService {
                 .description(order.getDescription())
                 .senderAddress(order.getSenderAddress())
                 .recipientAddress(order.getRecipientAddress())
+                .receiverName(order.getReceiverName())
                 .weight(order.getWeight())
                 .status(order.getStatus())
                 .createdAt(order.getCreatedAt())

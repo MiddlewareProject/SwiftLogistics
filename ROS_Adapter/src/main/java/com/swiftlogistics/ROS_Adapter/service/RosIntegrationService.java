@@ -1,11 +1,14 @@
 package com.swiftlogistics.ROS_Adapter.service;
 
 import com.swiftlogistics.ROS_Adapter.config.RabbitMqConfig;
+import com.swiftlogistics.ROS_Adapter.dto.DriverInfo;
+import com.swiftlogistics.ROS_Adapter.dto.GroupedRouteDto;
 import com.swiftlogistics.ROS_Adapter.dto.OrderCreatedEvent;
 import com.swiftlogistics.ROS_Adapter.dto.RosDashboardSnapshot;
 import com.swiftlogistics.ROS_Adapter.dto.RosEventLogEntry;
 import com.swiftlogistics.ROS_Adapter.dto.RouteGeneratedEvent;
 import com.swiftlogistics.ROS_Adapter.dto.RouteResult;
+import com.swiftlogistics.ROS_Adapter.dto.VehicleStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -59,11 +62,17 @@ public class RosIntegrationService {
                 .recentEvents(getRecentEvents())
                 .recentRoutes(List.copyOf(recentRoutes))
                 .vehicleStatus(mockRosService.getVehicleStatuses())
+                .drivers(mockRosService.getDrivers())
+                .groupedRoutes(mockRosService.getGroupedRoutes())
                 .build();
     }
 
     public List<RosEventLogEntry> getRecentEvents() {
         return eventLog.stream().limit(MAX_EVENTS).toList();
+    }
+
+    public List<GroupedRouteDto> getGroupedRoutes() {
+        return mockRosService.getGroupedRoutes();
     }
 
     public RouteResult getRoute(String orderNumber) {
@@ -76,6 +85,18 @@ public class RosIntegrationService {
 
     public Optional<RouteResult> getLatestRoute() {
         return recentRoutes.stream().findFirst();
+    }
+
+    public DriverInfo addDriver(String driverId, String name) {
+        DriverInfo driver = mockRosService.addDriver(driverId, name);
+        recordEvent("Driver Added", driver.getName() + " (" + driver.getDriverId() + ") added to fleet");
+        return driver;
+    }
+
+    public VehicleStatus addVehicle(String vehicleId, String vehiclePlate, String vehicleType) {
+        VehicleStatus vehicle = mockRosService.addVehicle(vehicleId, vehiclePlate, vehicleType);
+        recordEvent("Vehicle Added", vehicle.getVehicleType() + " (" + vehicle.getVehiclePlate() + ") added to fleet");
+        return vehicle;
     }
 
     private void processOrder(OrderCreatedEvent event) {

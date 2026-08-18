@@ -2,6 +2,8 @@ package com.swiftlogistics.WMS_Adapter.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
@@ -63,6 +65,21 @@ public class WmsTcpClient {
                     + host + ":" + port + ": " + exception.getMessage();
             wmsTcpStatusService.recordFailure(messageWithEndpoint);
             throw new IllegalStateException(messageWithEndpoint, exception);
+        }
+    }
+
+    // Opens and immediately closes a TCP connection to establish real ONLINE/OFFLINE status
+    // right at startup, instead of leaving it as UNKNOWN until the first real order arrives.
+    @EventListener(ApplicationReadyEvent.class)
+    public void checkConnectivity() {
+        log.info("Checking WMS TCP connectivity to {}:{}", host, port);
+
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(host, port), connectTimeoutMs);
+            wmsTcpStatusService.recordSuccess();
+        } catch (IOException exception) {
+            wmsTcpStatusService.recordFailure(
+                    "Failed to connect to WMS TCP endpoint " + host + ":" + port + ": " + exception.getMessage());
         }
     }
 
