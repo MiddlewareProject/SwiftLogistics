@@ -3931,6 +3931,57 @@ function App() {
                     </div>
                   </div>
                 ) : selectedDelivery ? (
+                  <div className="driver-app-shell">
+                    <aside className="driver-app-sidebar" aria-label="Driver navigation">
+                      <div className="driver-app-brand">
+                        <LogoIcon />
+                        <div>
+                          <strong>SwiftTrack</strong>
+                          <span>Driver App</span>
+                        </div>
+                      </div>
+                      <nav className="driver-app-nav">
+                        {[
+                          ['dashboard', 'Dashboard', <DashboardIcon />],
+                          ['deliveries', 'My Deliveries', <LogoIcon />],
+                          ['route', 'My Route', <RouteIcon />],
+                          ['history', 'Delivery History', <HistoryIcon />],
+                          ['profile', 'Profile', <UserIcon />]
+                        ].map(([view, label, icon]) => (
+                          <button
+                            type="button"
+                            key={view}
+                            className={`driver-app-nav-item ${driverView === view ? 'active' : ''}`}
+                            onClick={() => {
+                              clearPodState();
+                              clearFailureState();
+                              setSelectedDelivery(null);
+                              setDriverView(view);
+                            }}
+                          >
+                            {icon}
+                            <span>{label}</span>
+                          </button>
+                        ))}
+                        <button type="button" className="driver-app-nav-item disabled" disabled>
+                          <BellIcon />
+                          <span>Notifications</span>
+                          <small>Coming later</small>
+                        </button>
+                      </nav>
+                      <div className="driver-vehicle-card">
+                        <TruckIcon />
+                        <strong>{currentVehicle.vehiclePlate || currentVehicle.vehicleId || 'Vehicle not assigned'}</strong>
+                        <span>{currentVehicle.vehicleId || 'Not available'}</span>
+                        <div className="driver-online-pill"><span></span> Online</div>
+                      </div>
+                      <button type="button" className="driver-app-logout" onClick={handleDriverLogout}>
+                        <LogOutIcon />
+                        <span>Logout</span>
+                      </button>
+                    </aside>
+
+                    <section className="driver-app-main driver-detail-main">
                   <div className="driver-portal">
                     <header className="driver-header">
                       <div>
@@ -4241,6 +4292,8 @@ function App() {
                         </div>
                       </div>
                     </div>
+                  </div>
+                    </section>
                   </div>
                 ) : (
                   <div className="driver-app-shell">

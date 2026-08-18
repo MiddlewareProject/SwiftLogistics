@@ -2591,6 +2591,10 @@ body {
   gap: 24px;
 }
 
+.driver-detail-main .driver-portal {
+  gap: 20px;
+}
+
 .driver-header {
   display: flex;
   justify-content: space-between;
@@ -2602,6 +2606,11 @@ body {
   font-size: 30px;
   font-weight: 800;
   color: var(--text-main);
+}
+
+.driver-detail-main .driver-header h1 {
+  font-size: 24px;
+  font-weight: 700;
 }
 
 .driver-header p {
