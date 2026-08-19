@@ -294,6 +294,47 @@ const formatDateTime = (value) => {
   });
 };
 
+const formatWarehouseDateTime = (value) => {
+  if (!value) return 'Not available';
+
+  const formatOptions = {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  };
+  const textValue = String(value);
+  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(textValue);
+
+  if (hasTimezone) {
+    return new Date(textValue).toLocaleString([], {
+      ...formatOptions,
+      timeZone: 'Asia/Colombo'
+    });
+  }
+
+  const parts = textValue.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!parts) {
+    return formatDateTime(value);
+  }
+
+  const [, year, month, day, hour, minute, second = '0'] = parts;
+  const displayDate = new Date(Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second)
+  ));
+
+  return displayDate.toLocaleString([], {
+    ...formatOptions,
+    timeZone: 'UTC'
+  });
+};
+
 const decodeJwtPayload = (token) => {
   try {
     const payload = token.split('.')[1];
@@ -3843,7 +3884,7 @@ function App() {
                                       </span>
                                     </td>
                                     <td>{pkg.currentLocation || 'Not assigned'}</td>
-                                    <td>{formatDateTime(pkg.updatedAt)}</td>
+                                    <td>{formatWarehouseDateTime(pkg.updatedAt)}</td>
                                     <td>
                                       {pkg.status === 'WAREHOUSE' ? (
                                         <button
@@ -3952,7 +3993,7 @@ function App() {
                                 <span className={`warehouse-timeline-dot ${item.status === 'FAILED' ? 'failed' : ''}`}></span>
                                 <div>
                                   <div className="warehouse-timeline-title">{toWarehouseStatusLabel(item.status)}</div>
-                                  <div className="warehouse-timeline-meta">{item.location || 'No location'} - {formatDateTime(item.eventTime)}</div>
+                                  <div className="warehouse-timeline-meta">{item.location || 'No location'} - {formatWarehouseDateTime(item.eventTime)}</div>
                                   <p>{item.description || 'No description provided'}</p>
                                 </div>
                               </div>
@@ -4013,7 +4054,7 @@ function App() {
                                 <span className={`badge ${getWarehouseStatusBadge(entry.status)}`}>{toWarehouseStatusLabel(entry.status)}</span>
                                 <span className="cms-event-name">
                                   <strong>{entry.packageId}</strong> for {entry.orderNumber}: {entry.description || 'Tracking updated'}
-                                  <small>{formatDateTime(entry.eventTime)}</small>
+                                  <small>{formatWarehouseDateTime(entry.eventTime)}</small>
                                 </span>
                               </div>
                             ))
