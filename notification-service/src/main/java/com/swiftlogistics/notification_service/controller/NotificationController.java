@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -38,5 +39,20 @@ public class NotificationController {
         return ResponseEntity.ok(
                 notificationService.getClientNotifications(clientId)
         );
+    }
+
+    @GetMapping("/driver/{driverId}")
+    public ResponseEntity<List<NotificationDto>> getDriverNotifications(
+            @PathVariable String driverId) {
+
+        return ResponseEntity.ok(
+                notificationService.getDriverNotifications(driverId)
+        );
+    }
+
+    @PatchMapping("/{id}/read")
+    public ResponseEntity<Void> markAsRead(@PathVariable Long id) {
+        notificationService.markAsRead(id);
+        return ResponseEntity.ok().build();
     }
 }

@@ -42,6 +42,20 @@ public class RabbitMQConfig {
 
 
     // ============================================================
+    // ROUTE GENERATED (driver assignment)
+    // ============================================================
+
+    public static final String ROUTE_EXCHANGE =
+            "route.generated.exchange";
+
+    public static final String ROUTE_ROUTING_KEY =
+            "route.generated";
+
+    public static final String ROUTE_QUEUE =
+            "notification.route.generated.queue";
+
+
+    // ============================================================
     // TRACKING EXCHANGE
     // ============================================================
 
@@ -104,6 +118,39 @@ public class RabbitMQConfig {
                 .bind(orderNotificationQueue)
                 .to(orderExchange)
                 .with(ORDER_ROUTING_KEY);
+    }
+
+
+    // ============================================================
+    // ROUTE EXCHANGE
+    // ============================================================
+
+    @Bean
+    public TopicExchange routeExchange() {
+        return new TopicExchange(
+                ROUTE_EXCHANGE,
+                true,
+                false
+        );
+    }
+
+    @Bean
+    public Queue routeNotificationQueue() {
+        return new Queue(
+                ROUTE_QUEUE,
+                true
+        );
+    }
+
+    @Bean
+    public Binding routeNotificationBinding(
+            Queue routeNotificationQueue,
+            TopicExchange routeExchange) {
+
+        return BindingBuilder
+                .bind(routeNotificationQueue)
+                .to(routeExchange)
+                .with(ROUTE_ROUTING_KEY);
     }
 
 

@@ -145,6 +145,54 @@ public class NotificationService {
 
 
 
+    public Notification createDriverAssignedNotification(
+            String orderNumber,
+            String driverId,
+            String driverName,
+            String vehiclePlate,
+            Double distanceKm) {
+
+        Notification notification =
+                Notification.builder()
+                        .orderNumber(orderNumber)
+                        .recipientType("DRIVER")
+                        .recipientId(driverId)
+                        .title("New Route Assigned")
+                        .message(
+                                "Order " + orderNumber
+                                        + " assigned to you (vehicle " + vehiclePlate
+                                        + ", " + distanceKm + " km)."
+                        )
+                        .notificationType("DRIVER_ASSIGNED")
+                        .status("ASSIGNED")
+                        .read(false)
+                        .createdAt(LocalDateTime.now())
+                        .build();
+
+        Notification saved =
+                notificationRepository.save(notification);
+
+        broadcast(toDto(saved));
+
+        return saved;
+    }
+
+    public List<NotificationDto> getDriverNotifications(String driverId) {
+
+        return notificationRepository
+                .findByRecipientTypeAndRecipientIdOrderByCreatedAtDesc("DRIVER", driverId)
+                .stream()
+                .map(this::toDto)
+                .toList();
+    }
+
+    public Notification markAsRead(Long id) {
+        Notification notification = notificationRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Notification not found: " + id));
+        notification.setRead(true);
+        return notificationRepository.save(notification);
+    }
+
     public List<NotificationDto> getAllNotifications() {
 
         return notificationRepository

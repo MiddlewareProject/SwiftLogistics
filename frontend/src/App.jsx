@@ -272,15 +272,36 @@ const getClientStatusMessage = (status) => {
   return messages[status] || 'Tracking status unavailable';
 };
 
+// Backend timestamps are naive LocalDateTime strings (no timezone suffix) representing
+// UTC (the container clock), e.g. "2026-08-19T03:20:02". Without a 'Z'/offset, the
+// browser's Date parser wrongly treats them as already being in local time and skips
+// conversion entirely - so append 'Z' when missing to get correct local-time display.
+const toUtcDate = (value) => {
+  if (!value) return null;
+  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(value);
+  return new Date(hasTimezone ? value : `${value}Z`);
+};
+
 const formatDateTime = (value) => {
-  if (!value) return 'Not available';
-  return new Date(value).toLocaleString([], {
+  const date = toUtcDate(value);
+  if (!date) return 'Not available';
+  return date.toLocaleString([], {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
   });
+};
+
+const decodeJwtPayload = (token) => {
+  try {
+    const payload = token.split('.')[1];
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
 };
 
 const getStoredUser = () => {
@@ -291,7 +312,7 @@ const getStoredUser = () => {
 const mapBackendOrder = (order) => {
   const displayStatus = toDisplayStatus(order.status);
   const time = order.createdAt
-    ? new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    ? toUtcDate(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : '';
 
   return {
@@ -671,12 +692,63 @@ function App() {
   const [activeTrackingOrder, setActiveTrackingOrder] = useState(null);
 
   // Notifications state
-  const [notifications, setNotifications] = useState([
-    { id: 1, title: 'Route Optimized', desc: 'ROS successfully computed optimal route for ST-902148.', time: '10 mins ago', type: 'route', unread: true },
-    { id: 2, title: 'Driver Assigned', desc: 'Marcus Vance was assigned to order ST-902148.', time: '1 hour ago', type: 'driver', unread: true },
-    { id: 3, title: 'Package Received', desc: 'Warehouse Hub A received package for ST-719402.', time: 'Yesterday', type: 'wms', unread: false },
-    { id: 4, title: 'Delivery Completed', desc: 'Order ST-881290 has been successfully delivered to Miami.', time: '2 days ago', type: 'delivery', unread: false }
-  ]);
+  const [notifications, setNotifications] = useState([]);
+
+  // Loads notifications from the persisted Notification Service (source of truth).
+  // Reused by the polling effect below AND called directly right after actions like
+  // order creation, so the real, persisted notification shows up immediately instead
+  // of waiting for the next poll tick - without ever inventing a local-only fake one.
+  const loadNotifications = useCallback(async () => {
+    if (!user?.token) return;
+
+    try {
+      let endpoint;
+      if (user.role === 'DRIVER') {
+        endpoint = `${API_BASE}/api/notifications/driver/${user.username}`;
+      } else if (user.role === 'ADMIN') {
+        endpoint = `${API_BASE}/api/notifications`;
+      } else {
+        const claims = decodeJwtPayload(user.token);
+        if (!claims?.userId) return;
+        endpoint = `${API_BASE}/api/notifications/client/${claims.userId}`;
+      }
+
+      const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${user.token}` } });
+      if (!response.ok) return;
+
+      const data = await response.json();
+
+      const mapped = data.map((n) => ({
+        id: n.id,
+        title: n.title,
+        desc: n.message,
+        time: formatDateTime(n.createdAt),
+        type: (n.notificationType || '').includes('DRIVER') ? 'driver' :
+              (n.notificationType || '').includes('ORDER') ? 'order' :
+              (n.notificationType || '').includes('DELIVERY') ? 'delivery' : 'wms',
+        unread: !n.read
+      }));
+      setNotifications(mapped);
+    } catch {
+      // ignore transient failures, keep last known notifications
+    }
+  }, [user]);
+
+  // Poll the real Notification Service instead of showing hardcoded demo notifications.
+  useEffect(() => {
+    if (!user?.token) return undefined;
+
+    const runInitialLoad = async () => {
+      await loadNotifications();
+    };
+    runInitialLoad();
+
+    const intervalId = setInterval(loadNotifications, 15000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [user, loadNotifications]);
   const [cmsDashboard, setCmsDashboard] = useState(null);
   const [cmsLatestResult, setCmsLatestResult] = useState(null);
   const [cmsLoading, setCmsLoading] = useState(false);
@@ -1993,16 +2065,10 @@ function App() {
       setLatestSubmittedId(newOrderId);
       setShowSuccessModal(true);
 
-      // Add notification
-      const newNotification = {
-        id: Date.now(),
-        title: 'Order Submitted',
-        desc: `New order ${newOrderId} has been created and is pending validation.`,
-        time: 'Just now',
-        type: 'order',
-        unread: true
-      };
-      setNotifications([newNotification, ...notifications]);
+      // The real "Order Created" notification is persisted server-side by the
+      // Notification Service (via the OrderCreated RabbitMQ event) - refresh from
+      // there instead of fabricating a local, non-persisted notification.
+      setTimeout(loadNotifications, 800);
 
       // Reset Form
       setPickupAddress('');
@@ -2491,8 +2557,29 @@ function App() {
     setTimeout(() => setContactSuccess(''), 5000);
   };
 
+  const markNotificationRead = (id) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, unread: false } : n)));
+
+    if (user?.token) {
+      fetch(`${API_BASE}/api/notifications/${id}/read`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${user.token}` }
+      }).catch(() => {});
+    }
+  };
+
   const markAllNotificationsRead = () => {
+    const unreadIds = notifications.filter((n) => n.unread).map((n) => n.id);
     setNotifications(notifications.map(n => ({ ...n, unread: false })));
+
+    if (user?.token) {
+      unreadIds.forEach((id) => {
+        fetch(`${API_BASE}/api/notifications/${id}/read`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${user.token}` }
+        }).catch(() => {});
+      });
+    }
   };
 
   // Compute stats counters
@@ -3971,6 +4058,7 @@ function App() {
                           ['deliveries', 'My Deliveries', <LogoIcon />],
                           ['route', 'My Route', <RouteIcon />],
                           ['history', 'Delivery History', <HistoryIcon />],
+                          ['notifications', unreadCount > 0 ? `Notifications (${unreadCount})` : 'Notifications', <BellIcon />],
                           ['profile', 'Profile', <UserIcon />]
                         ].map(([view, label, icon]) => (
                           <button
@@ -3988,11 +4076,6 @@ function App() {
                             <span>{label}</span>
                           </button>
                         ))}
-                        <button type="button" className="driver-app-nav-item disabled" disabled>
-                          <BellIcon />
-                          <span>Notifications</span>
-                          <small>Coming later</small>
-                        </button>
                       </nav>
                       <div className="driver-vehicle-card">
                         <TruckIcon />
@@ -4336,6 +4419,7 @@ function App() {
                           ['deliveries', 'My Deliveries', <LogoIcon />],
                           ['route', 'My Route', <RouteIcon />],
                           ['history', 'Delivery History', <HistoryIcon />],
+                          ['notifications', unreadCount > 0 ? `Notifications (${unreadCount})` : 'Notifications', <BellIcon />],
                           ['profile', 'Profile', <UserIcon />]
                         ].map(([view, label, icon]) => (
                           <button
@@ -4348,11 +4432,6 @@ function App() {
                             <span>{label}</span>
                           </button>
                         ))}
-                        <button type="button" className="driver-app-nav-item disabled" disabled>
-                          <BellIcon />
-                          <span>Notifications</span>
-                          <small>Coming later</small>
-                        </button>
                       </nav>
                       <div className="driver-vehicle-card">
                         <TruckIcon />
@@ -4534,6 +4613,40 @@ function App() {
                         <div className="card driver-route-card expanded">
                           <div className="driver-card-title"><h3>My Route ({routeId})</h3></div>
                           {sortedDriverPackages.length > 0 ? <RouteOptimizationMap routes={[{ routeId, driverName: activeDriverName || authenticatedDriverId, hubAddress: 'SwiftLogistics Hub', stops: sortedDriverPackages.map((pkg, index) => ({ sequence: pkg.stopSequence || index + 1, orderNumber: pkg.orderNumber, receiverName: driverOrderDetails[pkg.orderNumber]?.receiverName, deliveryAddress: driverOrderDetails[pkg.orderNumber]?.recipientAddress || pkg.currentLocation || 'Address not available' })) }]} /> : <div className="driver-empty-state">No route is available yet.</div>}
+                        </div>
+                      )}
+
+                      {driverView === 'notifications' && (
+                        <div className="card driver-table-card">
+                          <div className="driver-card-title">
+                            <h3>Notifications</h3>
+                            {notifications.some((n) => n.unread) && (
+                              <button type="button" className="btn btn-secondary" onClick={markAllNotificationsRead}>
+                                Mark all as read
+                              </button>
+                            )}
+                          </div>
+                          {notifications.length === 0 ? (
+                            <div className="driver-empty-state">No notifications yet.</div>
+                          ) : (
+                            notifications.map((notif) => (
+                              <div
+                                className="driver-activity-row"
+                                key={notif.id}
+                                onClick={() => markNotificationRead(notif.id)}
+                                style={{ cursor: notif.unread ? 'pointer' : 'default', opacity: notif.unread ? 1 : 0.6 }}
+                              >
+                                <span className={`badge ${notif.unread ? 'badge-transit' : 'badge-completed'}`}>
+                                  {notif.unread ? 'New' : 'Read'}
+                                </span>
+                                <div>
+                                  <strong>{notif.title}</strong>
+                                  <p>{notif.desc}</p>
+                                  <p>{notif.time}</p>
+                                </div>
+                              </div>
+                            ))
+                          )}
                         </div>
                       )}
 
@@ -5907,9 +6020,11 @@ function App() {
 
                 <div className="notification-timeline">
                   {notifications.map((notif) => (
-                    <div 
-                      key={notif.id} 
+                    <div
+                      key={notif.id}
                       className={`card notification-card ${notif.unread ? 'unread' : ''}`}
+                      onClick={() => markNotificationRead(notif.id)}
+                      style={{ cursor: notif.unread ? 'pointer' : 'default' }}
                     >
                       {notif.unread && <div className="notification-unread-dot"></div>}
                       <div className="notification-icon-wrapper" style={{
