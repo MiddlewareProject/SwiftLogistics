@@ -76,6 +76,31 @@ const removeSessionValue = (key) => {
 
 const seedRegisteredAccounts = [
   {
+    id: 1,
+    name: 'Olivia Carter',
+    email: 'client1@swiftlogistics.com',
+    password: 'Client123',
+    company: 'Acme Industries Ltd',
+    role: 'Client Portal Manager'
+  },
+  {
+    id: 2,
+    name: 'Alicia Brooks',
+    email: 'client2@swiftlogistics.com',
+    password: 'Client123',
+    company: 'Northwind Distribution',
+    role: 'Client Portal Manager'
+  },
+  {
+    id: 3,
+    name: 'Marcus Lee',
+    email: 'client3@swiftlogistics.com',
+    password: 'Client123',
+    company: 'BluePeak Retail Group',
+    role: 'Client Portal Manager'
+  },
+  {
+    id: 4,
     name: 'Sarah Jenkins',
     email: 'sarah.jenkins@acmecorp.com',
     password: 'password123',
@@ -264,9 +289,128 @@ const formatDateTime = (value) => {
   });
 };
 
+const inferClientIdFromEmail = (email) => {
+  if (!email) {
+    return null;
+  }
+
+  const match = String(email).toLowerCase().match(/client(\d+)/);
+  if (!match) {
+    return null;
+  }
+
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+};
+
+const getRegisteredAccountForEmail = (email) => {
+  if (!email) {
+    return null;
+  }
+
+  const registeredAccounts = readStoredValue(REGISTERED_ACCOUNTS_STORAGE_KEY, seedRegisteredAccounts);
+  const normalizedEmail = String(email).trim().toLowerCase();
+
+  return registeredAccounts.find((account) =>
+    String(account?.email || '').trim().toLowerCase() === normalizedEmail
+  ) || null;
+};
+
+const getRegisteredAccountForId = (id) => {
+  if (id === null || id === undefined || id === '') {
+    return null;
+  }
+
+  const registeredAccounts = readStoredValue(REGISTERED_ACCOUNTS_STORAGE_KEY, seedRegisteredAccounts);
+  const normalizedId = Number(id);
+
+  if (!Number.isFinite(normalizedId)) {
+    return null;
+  }
+
+  return registeredAccounts.find((account) => Number(account?.id) === normalizedId) || null;
+};
+
+const decodeJwtUserId = (token) => {
+  if (!token || typeof token !== 'string') {
+    return null;
+  }
+
+  try {
+    const payloadSegment = token.split('.')[1];
+    if (!payloadSegment) {
+      return null;
+    }
+
+    const normalized = payloadSegment.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const decodedPayload = atob(padded);
+    const parsed = JSON.parse(decodedPayload);
+
+    if (Number.isFinite(Number(parsed.userId))) {
+      return Number(parsed.userId);
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const resolveClientId = ({ email, token, fallbackClientId = null }) => {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const matchedAccount = getRegisteredAccountForEmail(email);
+  const accountMatchId = Number(matchedAccount?.id ?? inferClientIdFromEmail(email));
+
+  if (Number.isFinite(accountMatchId) && accountMatchId > 0) {
+    return accountMatchId;
+  }
+
+  const fallbackId = Number(fallbackClientId);
+  if (Number.isFinite(fallbackId) && fallbackId > 0) {
+    const fallbackAccount = getRegisteredAccountForId(fallbackId);
+    const fallbackEmail = String(fallbackAccount?.email || '').trim().toLowerCase();
+    if (!fallbackEmail || fallbackEmail === normalizedEmail) {
+      return fallbackId;
+    }
+  }
+
+  const jwtUserId = decodeJwtUserId(token);
+  return Number.isFinite(Number(jwtUserId)) ? Number(jwtUserId) : null;
+};
+
 const getStoredUser = () => {
   const storedUser = readStoredValue(AUTH_USER_STORAGE_KEY, null);
-  return storedUser && storedUser.token ? storedUser : null;
+  if (!storedUser || !storedUser.token) {
+    return null;
+  }
+
+  const emailSource = storedUser.email || storedUser.username;
+  const knownAccountId = Number(getRegisteredAccountForEmail(emailSource)?.id ?? inferClientIdFromEmail(emailSource));
+  const resolvedClientId = Number.isFinite(knownAccountId) && knownAccountId > 0
+    ? knownAccountId
+    : resolveClientId({
+        email: emailSource,
+        token: storedUser.token,
+        fallbackClientId: storedUser.clientId
+      });
+
+  if (storedUser.driverId) {
+    return {
+      ...storedUser,
+      clientId: resolvedClientId,
+      driverId: storedUser.driverId
+    };
+  }
+
+  if (!resolvedClientId) {
+    return storedUser;
+  }
+
+  return {
+    ...storedUser,
+    clientId: resolvedClientId
+  };
 };
 
 const mapBackendOrder = (order) => {
@@ -395,12 +539,177 @@ function App() {
   const [activeTrackingOrder, setActiveTrackingOrder] = useState(null);
 
   // Notifications state
-  const [notifications, setNotifications] = useState([
-    { id: 1, title: 'Route Optimized', desc: 'ROS successfully computed optimal route for ST-902148.', time: '10 mins ago', type: 'route', unread: true },
-    { id: 2, title: 'Driver Assigned', desc: 'Marcus Vance was assigned to order ST-902148.', time: '1 hour ago', type: 'driver', unread: true },
-    { id: 3, title: 'Package Received', desc: 'Warehouse Hub A received package for ST-719402.', time: 'Yesterday', type: 'wms', unread: false },
-    { id: 4, title: 'Delivery Completed', desc: 'Order ST-881290 has been successfully delivered to Miami.', time: '2 days ago', type: 'delivery', unread: false }
-  ]);
+  // const [notifications, setNotifications] = useState([
+  //   { id: 1, title: 'Route Optimized', desc: 'ROS successfully computed optimal route for ST-902148.', time: '10 mins ago', type: 'route', unread: true },
+  //   { id: 2, title: 'Driver Assigned', desc: 'Marcus Vance was assigned to order ST-902148.', time: '1 hour ago', type: 'driver', unread: true },
+  //   { id: 3, title: 'Package Received', desc: 'Warehouse Hub A received package for ST-719402.', time: 'Yesterday', type: 'wms', unread: false },
+  //   { id: 4, title: 'Delivery Completed', desc: 'Order ST-881290 has been successfully delivered to Miami.', time: '2 days ago', type: 'delivery', unread: false }
+  // ]);
+
+  const [notifications, setNotifications] = useState([]);
+  
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const isDriver =
+      user.role?.toUpperCase() === 'DRIVER';
+
+    const recipientId =
+      isDriver
+        ? user.driverId
+        : user.clientId;
+
+    if (!recipientId) {
+      console.warn(
+        'Cannot load notifications: recipient ID missing'
+      );
+      return;
+    }
+
+    const endpoint = isDriver
+      ? `http://localhost:8086/api/notifications/driver/${encodeURIComponent(recipientId)}`
+      : `http://localhost:8086/api/notifications/client/${encodeURIComponent(recipientId)}`;
+
+    console.log('Fetching notifications:', endpoint);
+
+    const loadNotifications = async () => {
+      try {
+        const response = await fetch(endpoint);
+
+        console.log(
+          'Notification API response:',
+          response.status
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `HTTP ${response.status}`
+          );
+        }
+
+        const data = await response.json();
+
+        console.log(
+          'Notifications from database:',
+          data
+        );
+
+        const formattedNotifications = data.map(
+          (notification) => ({
+            id: notification.id,
+            title: notification.title,
+            desc: notification.message,
+            time: formatDateTime(
+              notification.createdAt
+            ),
+            type: notification.notificationType,
+            unread: notification.read === false,
+            orderNumber: notification.orderNumber,
+            status: notification.status
+          })
+        );
+
+        setNotifications(formattedNotifications);
+
+      } catch (error) {
+        console.error(
+          'Failed to load notifications:',
+          error
+        );
+      }
+    };
+
+    loadNotifications();
+
+    /*
+    * WebSocket
+    */
+
+    const recipientType =
+      isDriver ? 'DRIVER' : 'CLIENT';
+
+    const socket = new WebSocket(
+      `ws://localhost:8086/ws/notifications?type=${recipientType}&id=${encodeURIComponent(recipientId)}`
+    );
+
+    socket.onopen = () => {
+      console.log(
+        `Notification WebSocket connected: ${recipientType}:${recipientId}`
+      );
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const notification =
+          JSON.parse(event.data);
+
+        console.log(
+          'New notification received:',
+          notification
+        );
+
+        const newNotification = {
+          id: notification.id,
+          title: notification.title,
+          desc: notification.message,
+          time: formatDateTime(
+            notification.createdAt
+          ),
+          type: notification.notificationType,
+          unread: notification.read === false,
+          orderNumber: notification.orderNumber,
+          status: notification.status
+        };
+
+        setNotifications(
+          (previousNotifications) => {
+
+            const alreadyExists =
+              previousNotifications.some(
+                (item) =>
+                  item.id === newNotification.id
+              );
+
+            if (alreadyExists) {
+              return previousNotifications;
+            }
+
+            return [
+              newNotification,
+              ...previousNotifications
+            ];
+          }
+        );
+
+      } catch (error) {
+        console.error(
+          'Failed to process notification:',
+          error
+        );
+      }
+    };
+
+    socket.onerror = (error) => {
+      console.error(
+        'Notification WebSocket error:',
+        error
+      );
+    };
+
+    socket.onclose = () => {
+      console.log(
+        'Notification WebSocket disconnected'
+      );
+    };
+
+    return () => {
+      socket.close();
+    };
+
+  }, [user]);
+
   const [cmsDashboard, setCmsDashboard] = useState(null);
   const [cmsLatestResult, setCmsLatestResult] = useState(null);
   const [cmsLoading, setCmsLoading] = useState(false);
@@ -1089,13 +1398,20 @@ function App() {
         (account) => account.email.toLowerCase() === loginEmail.trim().toLowerCase()
       );
 
+      const resolvedClientId = resolveClientId({
+        email: loginEmail.trim(),
+        token: auth.token,
+        fallbackClientId: matchedAccount?.id ?? inferClientIdFromEmail(loginEmail.trim())
+      });
+
       setUser({
         name: matchedAccount?.name || auth.username,
         email: loginEmail.trim(),
         company: matchedAccount?.company || '',
         role: auth.role,
         username: auth.username,
-        token: auth.token
+        token: auth.token,
+        clientId: resolvedClientId
       });
       setCurrentScreen('dashboard');
       setDashboardTab(portalPathTab || 'overview');
@@ -1136,12 +1452,20 @@ function App() {
       const auth = JSON.parse(bodyText);
 
       const registeredAccounts = readStoredValue(REGISTERED_ACCOUNTS_STORAGE_KEY, seedRegisteredAccounts);
+      const nextId = Math.max(0, ...registeredAccounts.map((account) => Number(account.id) || 0)) + 1;
       const newAccount = {
+        id: nextId,
         name: regName.trim(),
         email: regEmail.trim(),
         company: regCompany.trim()
       };
       writeStoredValue(REGISTERED_ACCOUNTS_STORAGE_KEY, [...registeredAccounts, newAccount]);
+
+      const resolvedClientId = resolveClientId({
+        email: newAccount.email,
+        token: auth.token,
+        fallbackClientId: newAccount.id ?? inferClientIdFromEmail(newAccount.email)
+      });
 
       setUser({
         name: newAccount.name,
@@ -1149,7 +1473,8 @@ function App() {
         company: newAccount.company,
         role: auth.role,
         username: auth.username,
-        token: auth.token
+        token: auth.token,
+        clientId: resolvedClientId
       });
       setCurrentScreen('dashboard');
       setDashboardTab(portalPathTab || 'overview');
@@ -1227,16 +1552,16 @@ function App() {
       setLatestSubmittedId(newOrderId);
       setShowSuccessModal(true);
 
-      // Add notification
-      const newNotification = {
-        id: Date.now(),
-        title: 'Order Submitted',
-        desc: `New order ${newOrderId} has been created and is pending validation.`,
-        time: 'Just now',
-        type: 'order',
-        unread: true
-      };
-      setNotifications([newNotification, ...notifications]);
+      // // Add notification
+      // const newNotification = {
+      //   id: Date.now(),
+      //   title: 'Order Submitted',
+      //   desc: `New order ${newOrderId} has been created and is pending validation.`,
+      //   time: 'Just now',
+      //   type: 'order',
+      //   unread: true
+      // };
+      // setNotifications([newNotification, ...notifications]);
 
       // Reset Form
       setPickupAddress('');
@@ -1680,10 +2005,60 @@ function App() {
     setTimeout(() => setContactSuccess(''), 5000);
   };
 
-  const markAllNotificationsRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, unread: false })));
-  };
+  const markAllNotificationsRead = async () => {
+    if (!user) {
+      return;
+    }
 
+    const isDriver =
+      user.role?.toUpperCase() === 'DRIVER';
+
+    const recipientType =
+      isDriver ? 'DRIVER' : 'CLIENT';
+
+    const recipientId =
+      isDriver
+        ? user.driverId
+        : user.clientId;
+
+    if (!recipientId) {
+      console.warn(
+        'Cannot mark notifications as read: recipient ID missing'
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/notifications/read-all?recipientType=${recipientType}&recipientId=${encodeURIComponent(recipientId)}`,
+        {
+          method: 'PUT'
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Failed to mark all notifications as read: ${response.status}`
+        );
+      }
+
+      setNotifications(
+        (previousNotifications) =>
+          previousNotifications.map(
+            (notification) => ({
+              ...notification,
+              unread: false
+            })
+          )
+      );
+
+    } catch (error) {
+      console.error(
+        'Failed to mark all notifications as read:',
+        error
+      );
+    }
+  };
   // Compute stats counters
   const totalOrdersCount = orders.length;
   const pendingOrdersCount = orders.filter(o => o.status === 'Pending' || o.status === 'Warehouse' || o.status === 'Route Generated').length;
@@ -4204,44 +4579,122 @@ function App() {
                 <header className="screen-header">
                   <div>
                     <h1 className="screen-title">Notifications</h1>
-                    <p className="screen-subtitle">Integration events logged from ROS, WMS and Dispatch systems</p>
+                    <p className="screen-subtitle">
+                      Integration events logged from ROS, WMS and Dispatch systems
+                    </p>
                   </div>
+
                   <div>
-                    <button className="btn btn-secondary" onClick={markAllNotificationsRead}>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={markAllNotificationsRead}
+                    >
                       Mark all as read
                     </button>
                   </div>
                 </header>
 
                 <div className="notification-timeline">
-                  {notifications.map((notif) => (
-                    <div 
-                      key={notif.id} 
-                      className={`card notification-card ${notif.unread ? 'unread' : ''}`}
-                    >
-                      {notif.unread && <div className="notification-unread-dot"></div>}
-                      <div className="notification-icon-wrapper" style={{
-                        backgroundColor: notif.type === 'route' ? 'var(--status-transit-bg)' :
-                                        notif.type === 'driver' ? 'var(--status-purple-bg)' :
-                                        notif.type === 'order' ? 'var(--status-pending-bg)' : 'var(--status-completed-bg)',
-                        color: notif.type === 'route' ? 'var(--status-transit)' :
-                               notif.type === 'driver' ? 'var(--status-purple)' :
-                               notif.type === 'order' ? 'var(--status-pending)' : 'var(--status-completed)'
-                      }}>
-                        {notif.type === 'route' ? <RouteIcon /> :
-                         notif.type === 'driver' ? <TruckIcon /> :
-                         notif.type === 'order' ? <PlusCircleIcon /> : <ShieldCheckIcon />}
-                      </div>
+
+                  {notifications.length === 0 ? (
+                    <div className="card notification-card">
                       <div className="notification-info">
-                        <h4>{notif.title}</h4>
-                        <p>{notif.desc}</p>
-                        <div className="notification-time">{notif.time}</div>
+                        <h4>No notifications</h4>
+                        <p>You don't have any notifications yet.</p>
                       </div>
                     </div>
-                  ))}
+                  ) : (
+
+                    notifications.map((notif) => {
+
+                      const type = notif.type;
+
+                      const isOrderCreated =
+                        type === 'ORDER_CREATED';
+
+                      const isDeliveryCompleted =
+                        type === 'DELIVERY_COMPLETED';
+
+                      const isDeliveryFailed =
+                        type === 'DELIVERY_FAILED';
+
+                      // const isDeliveryUpdate =
+                      //   type === 'DELIVERY_UPDATE';
+
+                      return (
+                        <div
+                          key={notif.id}
+                          className={`card notification-card ${
+                            notif.unread ? 'unread' : ''
+                          }`}
+                        >
+
+                          {notif.unread && (
+                            <div className="notification-unread-dot"></div>
+                          )}
+
+                          <div
+                            className="notification-icon-wrapper"
+                            style={{
+                              backgroundColor:
+                                isOrderCreated
+                                  ? 'var(--status-pending-bg)'
+                                  : isDeliveryCompleted
+                                  ? 'var(--status-completed-bg)'
+                                  : isDeliveryFailed
+                                  ? 'var(--status-failed-bg)'
+                                  : 'var(--status-transit-bg)',
+
+                              color:
+                                isOrderCreated
+                                  ? 'var(--status-pending)'
+                                  : isDeliveryCompleted
+                                  ? 'var(--status-completed)'
+                                  : isDeliveryFailed
+                                  ? 'var(--status-failed)'
+                                  : 'var(--status-transit)'
+                            }}
+                          >
+
+                            {isOrderCreated ? (
+                              <PlusCircleIcon />
+                            ) : isDeliveryCompleted ? (
+                              <ShieldCheckIcon />
+                            ) : isDeliveryFailed ? (
+                              <TruckIcon />
+                            ) : (
+                              <RouteIcon />
+                            )}
+
+                          </div>
+
+                          <div className="notification-info">
+
+                            <h4>{notif.title}</h4>
+
+                            <p>{notif.desc}</p>
+
+                            {notif.orderNumber && (
+                              <div className="notification-order">
+                                Order: {notif.orderNumber}
+                              </div>
+                            )}
+
+                            <div className="notification-time">
+                              {notif.time}
+                            </div>
+
+                          </div>
+
+                        </div>
+                      );
+                    })
+
+                  )}
+
                 </div>
               </div>
-            )}
+            )}    
 
             {/* TAB 7: PROFILE */}
             {dashboardTab === 'profile' && (

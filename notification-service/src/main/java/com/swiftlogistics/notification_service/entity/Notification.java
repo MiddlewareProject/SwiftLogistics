@@ -26,9 +26,15 @@ public class Notification {
     @Column(name = "client_id")
     private Long clientId;
 
-    @Column(name = "recipient_type")
+    /*
+     * CLIENT or DRIVER
+     */
+    @Column(name = "recipient_type", nullable = false)
     private String recipientType;
 
+    /*
+     * Client ID or Driver ID.
+     */
     @Column(name = "recipient_id")
     private String recipientId;
 
@@ -43,9 +49,9 @@ public class Notification {
 
     private String status;
 
-    @Column(name = "is_read")
-    private boolean read;
+    @Column(name = "is_read", nullable = false)
+    private boolean read = false;
 
-    @Column(name = "created_at")
+    @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 }

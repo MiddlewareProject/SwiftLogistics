@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,6 +30,12 @@ public class NotificationService {
         this.objectMapper = objectMapper;
     }
 
+    /*
+     * ============================================================
+     * DELIVERY / TRACKING NOTIFICATION
+     * ============================================================
+     */
+
     public Notification createAndBroadcast(
             String orderNumber,
             Long clientId,
@@ -44,6 +51,7 @@ public class NotificationService {
         if ("DELIVERED".equalsIgnoreCase(status)) {
 
             title = "Delivery Completed";
+
             message =
                     "Package " + packageId
                             + " for order " + orderNumber
@@ -54,6 +62,7 @@ public class NotificationService {
         } else if ("FAILED".equalsIgnoreCase(status)) {
 
             title = "Delivery Failed";
+
             message =
                     "Delivery for order " + orderNumber
                             + " could not be completed.";
@@ -63,6 +72,7 @@ public class NotificationService {
         } else {
 
             title = "Delivery Update";
+
             message =
                     description != null
                             ? description
@@ -94,13 +104,18 @@ public class NotificationService {
         Notification saved =
                 notificationRepository.save(notification);
 
-        NotificationDto dto =
-                toDto(saved);
-
-        broadcast(dto);
+        broadcastToRecipient(
+                saved
+        );
 
         return saved;
     }
+
+    /*
+     * ============================================================
+     * ORDER CREATED NOTIFICATION
+     * ============================================================
+     */
 
     public Notification createOrderCreatedNotification(
             String orderNumber,
@@ -120,10 +135,12 @@ public class NotificationService {
                         .title("Order Created")
                         .message(
                                 description != null
-                                        ? "Your order " + orderNumber
+                                        ? "Your order "
+                                                + orderNumber
                                                 + " has been created. "
                                                 + description
-                                        : "Your order " + orderNumber
+                                        : "Your order "
+                                                + orderNumber
                                                 + " has been created."
                         )
                         .notificationType("ORDER_CREATED")
@@ -135,15 +152,18 @@ public class NotificationService {
         Notification saved =
                 notificationRepository.save(notification);
 
-        NotificationDto dto =
-                toDto(saved);
-
-        broadcast(dto);
+        broadcastToRecipient(
+                saved
+        );
 
         return saved;
     }
 
-
+    /*
+     * ============================================================
+     * GET NOTIFICATIONS
+     * ============================================================
+     */
 
     public List<NotificationDto> getAllNotifications() {
 
@@ -158,11 +178,85 @@ public class NotificationService {
             Long clientId) {
 
         return notificationRepository
-                .findByClientIdOrderByCreatedAtDesc(clientId)
+                .findByRecipientTypeAndRecipientIdOrderByCreatedAtDesc(
+                        "CLIENT",
+                        clientId.toString()
+                )
                 .stream()
                 .map(this::toDto)
                 .toList();
     }
+
+    public List<NotificationDto> getDriverNotifications(
+            String driverId) {
+
+        return notificationRepository
+                .findByRecipientTypeAndRecipientIdOrderByCreatedAtDesc(
+                        "DRIVER",
+                        driverId
+                )
+                .stream()
+                .map(this::toDto)
+                .toList();
+    }
+
+    /*
+     * ============================================================
+     * MARK ONE AS READ
+     * ============================================================
+     */
+
+    @Transactional
+    public void markAsRead(Long notificationId) {
+
+        Notification notification =
+                notificationRepository
+                        .findById(notificationId)
+                        .orElseThrow(
+                                () -> new RuntimeException(
+                                        "Notification not found: "
+                                                + notificationId
+                                )
+                        );
+
+        notification.setRead(true);
+
+        notificationRepository.save(notification);
+    }
+
+    /*
+     * ============================================================
+     * MARK ALL AS READ
+     * ============================================================
+     */
+
+    @Transactional
+    public void markAllAsRead(
+            String recipientType,
+            String recipientId) {
+
+        List<Notification> notifications =
+                notificationRepository
+                        .findByRecipientTypeAndRecipientIdOrderByCreatedAtDesc(
+                                recipientType,
+                                recipientId
+                        );
+
+        for (Notification notification : notifications) {
+
+            notification.setRead(true);
+        }
+
+        notificationRepository.saveAll(
+                notifications
+        );
+    }
+
+    /*
+     * ============================================================
+     * DTO CONVERSION
+     * ============================================================
+     */
 
     private NotificationDto toDto(
             Notification notification) {
@@ -171,8 +265,12 @@ public class NotificationService {
                 .id(notification.getId())
                 .orderNumber(notification.getOrderNumber())
                 .clientId(notification.getClientId())
-                .recipientType(notification.getRecipientType())
-                .recipientId(notification.getRecipientId())
+                .recipientType(
+                        notification.getRecipientType()
+                )
+                .recipientId(
+                        notification.getRecipientId()
+                )
                 .title(notification.getTitle())
                 .message(notification.getMessage())
                 .notificationType(
@@ -184,17 +282,27 @@ public class NotificationService {
                 .build();
     }
 
-    private void broadcast(
-            NotificationDto notification) {
+    /*
+     * ============================================================
+     * USER-SPECIFIC WEBSOCKET
+     * ============================================================
+     */
+
+    private void broadcastToRecipient(
+            Notification notification) {
 
         try {
 
             String json =
                     objectMapper.writeValueAsString(
-                            notification
+                            toDto(notification)
                     );
 
-            webSocketService.broadcast(json);
+            webSocketService.sendToRecipient(
+                    notification.getRecipientType(),
+                    notification.getRecipientId(),
+                    json
+            );
 
         } catch (JsonProcessingException e) {
 

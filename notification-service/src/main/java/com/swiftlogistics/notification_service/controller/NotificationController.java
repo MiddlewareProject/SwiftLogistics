@@ -3,10 +3,7 @@ package com.swiftlogistics.notification_service.controller;
 import java.util.List;
 
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import com.swiftlogistics.notification_service.dto.NotificationDto;
 import com.swiftlogistics.notification_service.service.NotificationService;
@@ -38,5 +35,36 @@ public class NotificationController {
         return ResponseEntity.ok(
                 notificationService.getClientNotifications(clientId)
         );
+    }
+
+    @GetMapping("/driver/{driverId}")
+    public ResponseEntity<List<NotificationDto>> getDriverNotifications(
+            @PathVariable String driverId) {
+
+        return ResponseEntity.ok(
+                notificationService.getDriverNotifications(driverId)
+        );
+    }
+
+    @PutMapping("/{notificationId}/read")
+    public ResponseEntity<Void> markNotificationAsRead(
+            @PathVariable Long notificationId) {
+
+        notificationService.markAsRead(notificationId);
+
+        return ResponseEntity.ok().build();
+    }
+
+    @PutMapping("/read-all")
+    public ResponseEntity<Void> markAllNotificationsAsRead(
+            @RequestParam String recipientType,
+            @RequestParam String recipientId) {
+
+        notificationService.markAllAsRead(
+                recipientType,
+                recipientId
+        );
+
+        return ResponseEntity.ok().build();
     }
 }

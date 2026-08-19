@@ -19,4 +19,9 @@ public interface NotificationRepository
     List<Notification> findByClientIdOrderByCreatedAtDesc(
             Long clientId
     );
+
+    List<Notification> findByRecipientTypeAndRecipientIdAndReadFalseOrderByCreatedAtDesc(
+            String recipientType,
+            String recipientId
+    );
 }
