@@ -57,15 +57,18 @@ public class TrackingService {
             "image/webp",
             "image/gif"
     );
-    private static final List<String> DRIVER_MANIFEST_STATUSES = List.of(
+    private static final List<String> DRIVER_ACTIVE_MANIFEST_STATUSES = List.of(
             TrackingStatus.LOADED.name(),
-            TrackingStatus.OUT_FOR_DELIVERY.name(),
-            TrackingStatus.DELIVERED.name(),
-            TrackingStatus.FAILED.name()
+            TrackingStatus.OUT_FOR_DELIVERY.name()
     );
     private static final List<String> DRIVER_HISTORY_STATUSES = List.of(
             TrackingStatus.DELIVERED.name(),
             TrackingStatus.FAILED.name()
+    );
+    private static final List<String> ACTIVE_UNASSIGNED_RECOVERY_STATUSES = List.of(
+            TrackingStatus.WAREHOUSE.name(),
+            TrackingStatus.LOADED.name(),
+            TrackingStatus.OUT_FOR_DELIVERY.name()
     );
 
     private final PackageTrackingRepository packageTrackingRepository;
@@ -74,6 +77,7 @@ public class TrackingService {
     private final FailedDeliveryRepository failedDeliveryRepository;
     private final PendingDriverAssignmentRepository pendingDriverAssignmentRepository;
     private final TrackingUpdatedPublisher trackingUpdatedPublisher;
+    private final RosRouteLookupClient rosRouteLookupClient;
     private final Clock clock;
 
     @Value("${warehouse.capacity}")
@@ -243,20 +247,23 @@ public class TrackingService {
         return true;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<DriverPackageResponse> getDriverPackages(String driverId) {
         if (isBlank(driverId)) {
             throw new IllegalArgumentException("Driver ID is required");
         }
+
+        recoverMissingAssignments();
 
         LocalDate today = LocalDate.now(clock);
         LocalDateTime start = today.atStartOfDay();
         LocalDateTime end = today.plusDays(1).atStartOfDay();
 
         return packageTrackingRepository
-                .findByAssignedDriverIdAndStatusInAndAssignmentTimeBetweenOrderByAssignmentTimeAsc(
+                .findDriverManifest(
                         driverId,
-                        DRIVER_MANIFEST_STATUSES,
+                        DRIVER_ACTIVE_MANIFEST_STATUSES,
+                        DRIVER_HISTORY_STATUSES,
                         start,
                         end
                 )
@@ -272,7 +279,7 @@ public class TrackingService {
         }
 
         return packageTrackingRepository
-                .findTop50ByAssignedDriverIdAndStatusInOrderByUpdatedAtDesc(driverId, DRIVER_HISTORY_STATUSES)
+                .findTop50ByAssignedDriverIdIgnoreCaseAndStatusInOrderByUpdatedAtDesc(driverId, DRIVER_HISTORY_STATUSES)
                 .stream()
                 .map(this::toDriverPackageResponse)
                 .toList();
@@ -542,6 +549,45 @@ public class TrackingService {
                 });
     }
 
+    private void recoverMissingAssignments() {
+        packageTrackingRepository.findActiveUnassignedPackages(ACTIVE_UNASSIGNED_RECOVERY_STATUSES)
+                .forEach(tracking -> rosRouteLookupClient.findRoute(tracking.getOrderNumber())
+                        .ifPresent(route -> recoverAssignment(tracking, route)));
+    }
+
+    private void recoverAssignment(PackageTracking tracking, RouteGeneratedEvent route) {
+        if (tracking == null || route == null || !isBlank(tracking.getAssignedDriverId())) {
+            return;
+        }
+
+        if (isBlank(route.getDriverId())) {
+            log.warn("ROS route for order {} did not include a driverId; leaving Tracking unassigned", tracking.getOrderNumber());
+            return;
+        }
+
+        RouteGeneratedEvent assignment = RouteGeneratedEvent.builder()
+                .orderNumber(tracking.getOrderNumber())
+                .clientId(route.getClientId())
+                .routeId(route.getRouteId())
+                .driverId(route.getDriverId())
+                .driverName(route.getDriverName())
+                .vehicleId(route.getVehicleId())
+                .vehiclePlate(route.getVehiclePlate())
+                .stopSequence(route.getStopSequence())
+                .distanceKm(route.getDistanceKm())
+                .durationMinutes(route.getDurationMinutes())
+                .trafficLevel(route.getTrafficLevel())
+                .generatedAt(route.getGeneratedAt())
+                .build();
+
+        applyAssignmentFields(
+                tracking,
+                assignment,
+                route.getGeneratedAt() == null ? now() : normalizeAssignmentTime(route.getGeneratedAt())
+        );
+        log.info("Recovered missing Tracking driver assignment for order {} from ROS route {}", tracking.getOrderNumber(), route.getRouteId());
+    }
+
     private LocalDateTime normalizeAssignmentTime(LocalDateTime generatedAt) {
         if (generatedAt == null) {
             return now();
@@ -695,7 +741,7 @@ public class TrackingService {
     }
 
     private void verifyAssignedDriver(PackageTracking tracking, String driverId) {
-        if (!Objects.equals(tracking.getAssignedDriverId(), driverId)) {
+        if (isBlank(tracking.getAssignedDriverId()) || !tracking.getAssignedDriverId().equalsIgnoreCase(driverId)) {
             throw new DriverAccessDeniedException("Forbidden: Package is assigned to another driver");
         }
     }

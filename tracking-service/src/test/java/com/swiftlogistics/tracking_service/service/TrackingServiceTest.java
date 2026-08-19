@@ -51,6 +51,7 @@ class TrackingServiceTest {
     private final FailedDeliveryRepository failedDeliveryRepository = mock(FailedDeliveryRepository.class);
     private final PendingDriverAssignmentRepository pendingDriverAssignmentRepository = mock(PendingDriverAssignmentRepository.class);
     private final TrackingUpdatedPublisher trackingUpdatedPublisher = mock(TrackingUpdatedPublisher.class);
+    private final RosRouteLookupClient rosRouteLookupClient = mock(RosRouteLookupClient.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-08-18T04:30:00Z"), ZoneId.of("Asia/Colombo"));
     private final TrackingService trackingService = new TrackingService(
             packageTrackingRepository,
@@ -59,6 +60,7 @@ class TrackingServiceTest {
             failedDeliveryRepository,
             pendingDriverAssignmentRepository,
             trackingUpdatedPublisher,
+            rosRouteLookupClient,
             clock
     );
 
@@ -334,29 +336,81 @@ class TrackingServiceTest {
     }
 
     @Test
-    void driverManifestReturnsOnlyTodayForAuthenticatedDriver() {
+    void driverManifestReturnsActiveAssignmentsAndTodaysTerminalPackagesForAuthenticatedDriver() {
         PackageTracking today = assignedPackage("DRV-01", "LOADED");
-        today.setAssignmentTime(LocalDateTime.of(2026, 8, 18, 10, 0));
-        when(packageTrackingRepository.findByAssignedDriverIdAndStatusInAndAssignmentTimeBetweenOrderByAssignmentTimeAsc(
-                anyString(), any(), any(LocalDateTime.class), any(LocalDateTime.class)
+        today.setAssignmentTime(LocalDateTime.of(2026, 8, 17, 10, 0));
+        when(packageTrackingRepository.findActiveUnassignedPackages(any())).thenReturn(List.of());
+        when(packageTrackingRepository.findDriverManifest(
+                anyString(), any(), any(), any(LocalDateTime.class), any(LocalDateTime.class)
         )).thenReturn(List.of(today));
 
         var packages = trackingService.getDriverPackages("DRV-01");
 
         assertThat(packages).hasSize(1);
         assertThat(packages.get(0).getDriverId()).isEqualTo("DRV-01");
-        ArgumentCaptor<List<String>> statusesCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<String>> activeStatusesCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<String>> terminalStatusesCaptor = ArgumentCaptor.forClass(List.class);
         ArgumentCaptor<LocalDateTime> startCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
         ArgumentCaptor<LocalDateTime> endCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(packageTrackingRepository).findByAssignedDriverIdAndStatusInAndAssignmentTimeBetweenOrderByAssignmentTimeAsc(
+        verify(packageTrackingRepository).findDriverManifest(
                 eq("DRV-01"),
-                statusesCaptor.capture(),
+                activeStatusesCaptor.capture(),
+                terminalStatusesCaptor.capture(),
                 startCaptor.capture(),
                 endCaptor.capture()
         );
-        assertThat(statusesCaptor.getValue()).containsExactly("LOADED", "OUT_FOR_DELIVERY", "DELIVERED", "FAILED");
+        assertThat(activeStatusesCaptor.getValue()).containsExactly("LOADED", "OUT_FOR_DELIVERY");
+        assertThat(terminalStatusesCaptor.getValue()).containsExactly("DELIVERED", "FAILED");
         assertThat(startCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 8, 18, 0, 0));
         assertThat(endCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 8, 19, 0, 0));
+    }
+
+    @Test
+    void driverManifestRecoversMissingAssignmentFromRosWithoutPublishingNotificationEvent() {
+        PackageTracking unassigned = packageTracking("LOADED", "Dock 2");
+        RouteGeneratedEvent route = RouteGeneratedEvent.builder()
+                .orderNumber(unassigned.getOrderNumber())
+                .clientId(unassigned.getClientId())
+                .driverId("drv-01")
+                .driverName("Amal Perera")
+                .routeId("RT-RECOVERED")
+                .vehicleId("VEH-01")
+                .vehiclePlate("TRK-982")
+                .distanceKm(8.4)
+                .durationMinutes(20)
+                .trafficLevel("LOW")
+                .generatedAt(LocalDateTime.of(2026, 8, 18, 4, 0))
+                .build();
+        PackageTracking recovered = assignedPackage("drv-01", "LOADED");
+        recovered.setRouteId("RT-RECOVERED");
+        when(packageTrackingRepository.findActiveUnassignedPackages(any())).thenReturn(List.of(unassigned));
+        when(rosRouteLookupClient.findRoute(unassigned.getOrderNumber())).thenReturn(Optional.of(route));
+        when(packageTrackingRepository.findDriverManifest(
+                eq("DRV-01"), any(), any(), any(LocalDateTime.class), any(LocalDateTime.class)
+        )).thenReturn(List.of(recovered));
+
+        var packages = trackingService.getDriverPackages("DRV-01");
+
+        assertThat(unassigned.getAssignedDriverId()).isEqualTo("drv-01");
+        assertThat(unassigned.getRouteId()).isEqualTo("RT-RECOVERED");
+        assertThat(packages).hasSize(1);
+        verify(packageTrackingRepository).save(unassigned);
+        verify(trackingUpdatedPublisher, never()).publish(any(TrackingUpdatedEvent.class));
+    }
+
+    @Test
+    void driverManifestContinuesWhenRosRecoveryFails() {
+        PackageTracking unassigned = packageTracking("LOADED", "Dock 2");
+        when(packageTrackingRepository.findActiveUnassignedPackages(any())).thenReturn(List.of(unassigned));
+        when(rosRouteLookupClient.findRoute(unassigned.getOrderNumber())).thenReturn(Optional.empty());
+        when(packageTrackingRepository.findDriverManifest(
+                eq("DRV-01"), any(), any(), any(LocalDateTime.class), any(LocalDateTime.class)
+        )).thenReturn(List.of());
+
+        var packages = trackingService.getDriverPackages("DRV-01");
+
+        assertThat(packages).isEmpty();
+        verify(packageTrackingRepository, never()).save(unassigned);
     }
 
     @Test
@@ -416,7 +470,7 @@ class TrackingServiceTest {
     @Test
     void driverHistoryReturnsOnlyTerminalDeliveriesForAuthenticatedDriver() {
         PackageTracking delivered = assignedPackage("DRV-01", "DELIVERED");
-        when(packageTrackingRepository.findTop50ByAssignedDriverIdAndStatusInOrderByUpdatedAtDesc(
+        when(packageTrackingRepository.findTop50ByAssignedDriverIdIgnoreCaseAndStatusInOrderByUpdatedAtDesc(
                 eq("DRV-01"), any()
         )).thenReturn(List.of(delivered));
 
@@ -425,7 +479,7 @@ class TrackingServiceTest {
         assertThat(history).hasSize(1);
         assertThat(history.get(0).getDriverId()).isEqualTo("DRV-01");
         ArgumentCaptor<List<String>> statusesCaptor = ArgumentCaptor.forClass(List.class);
-        verify(packageTrackingRepository).findTop50ByAssignedDriverIdAndStatusInOrderByUpdatedAtDesc(
+        verify(packageTrackingRepository).findTop50ByAssignedDriverIdIgnoreCaseAndStatusInOrderByUpdatedAtDesc(
                 eq("DRV-01"),
                 statusesCaptor.capture()
         );
@@ -447,6 +501,22 @@ class TrackingServiceTest {
     }
 
     @Test
+    void driverIdComparisonIsCaseInsensitiveForStatusUpdates() {
+        PackageTracking tracking = assignedPackage("drv-01", "LOADED");
+        when(packageTrackingRepository.findByOrderNumber(tracking.getOrderNumber())).thenReturn(Optional.of(tracking));
+        when(trackingHistoryRepository.findByOrderNumberOrderByEventTimeAsc(tracking.getOrderNumber())).thenReturn(List.of());
+
+        TrackingResponse response = trackingService.updateDriverStatus(
+                tracking.getOrderNumber(),
+                "DRV-01",
+                driverStatusRequest("OUT_FOR_DELIVERY", "In transit", null, null)
+        );
+
+        assertThat(response.getStatus()).isEqualTo("OUT_FOR_DELIVERY");
+        verify(packageTrackingRepository).save(tracking);
+    }
+
+    @Test
     void driverLoadedToOutForDeliverySucceeds() {
         PackageTracking tracking = assignedPackage("DRV-01", "LOADED");
         when(packageTrackingRepository.findByOrderNumber(tracking.getOrderNumber())).thenReturn(Optional.of(tracking));
@@ -460,6 +530,12 @@ class TrackingServiceTest {
 
         assertThat(response.getStatus()).isEqualTo("OUT_FOR_DELIVERY");
         assertThat(tracking.getStatus()).isEqualTo("OUT_FOR_DELIVERY");
+        ArgumentCaptor<TrackingHistory> historyCaptor = ArgumentCaptor.forClass(TrackingHistory.class);
+        verify(trackingHistoryRepository).save(historyCaptor.capture());
+        assertThat(historyCaptor.getValue().getStatus()).isEqualTo("OUT_FOR_DELIVERY");
+        ArgumentCaptor<TrackingUpdatedEvent> eventCaptor = ArgumentCaptor.forClass(TrackingUpdatedEvent.class);
+        verify(trackingUpdatedPublisher).publish(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getStatus()).isEqualTo("OUT_FOR_DELIVERY");
     }
 
     @Test

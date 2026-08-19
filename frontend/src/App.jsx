@@ -1478,14 +1478,24 @@ function App() {
     }
 
     let cancelled = false;
+    let inFlight = false;
+    let intervalId;
 
-    const loadDriverDashboard = async () => {
-      setDriverLoading(true);
+    const loadDriverDashboard = async (background = false) => {
+      if (inFlight) {
+        return;
+      }
+
+      inFlight = true;
+      if (!background) {
+        setDriverLoading(true);
+      }
       setDriverError('');
 
       try {
         const response = await fetch(`${API_BASE}/api/tracking/driver`, {
-          headers: { Authorization: `Bearer ${user.token}` }
+          headers: { Authorization: `Bearer ${user.token}` },
+          cache: 'no-store'
         });
 
         if (!response.ok) {
@@ -1514,11 +1524,10 @@ function App() {
         }
       } catch (error) {
         if (!cancelled) {
-          setDriverDashboard(null);
-          setDriverOrderDetails({});
           setDriverError(error.message || 'Unable to load driver manifest');
         }
       } finally {
+        inFlight = false;
         if (!cancelled) {
           setDriverLoading(false);
         }
@@ -1526,9 +1535,15 @@ function App() {
     };
 
     loadDriverDashboard();
+    intervalId = window.setInterval(() => {
+      loadDriverDashboard(true);
+    }, 5000);
 
     return () => {
       cancelled = true;
+      if (intervalId) {
+        window.clearInterval(intervalId);
+      }
     };
   }, [dashboardTab, authenticatedDriver, user]);
 
@@ -1592,9 +1607,9 @@ function App() {
       try {
         const authHeaders = { Authorization: `Bearer ${user.token}` };
         const [trackingResponse, orderResponse, routeResponse] = await Promise.all([
-          fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}`, { headers: authHeaders }),
-          fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders }),
-          fetch(`${API_BASE}/api/ros/routes/${selectedDelivery.orderNumber}`, { headers: authHeaders })
+          fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}`, { headers: authHeaders, cache: 'no-store' }),
+          fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders, cache: 'no-store' }),
+          fetch(`${API_BASE}/api/ros/routes/${selectedDelivery.orderNumber}`, { headers: authHeaders, cache: 'no-store' })
         ]);
 
         if (!trackingResponse.ok) {
@@ -1642,7 +1657,8 @@ function App() {
 
     try {
       const response = await fetch(`${API_BASE}/api/tracking/${encodeURIComponent(orderNumber)}`, {
-        headers: { Authorization: `Bearer ${user.token}` }
+        headers: { Authorization: `Bearer ${user.token}` },
+        cache: 'no-store'
       });
 
       if (response.status === 404) {
@@ -1686,7 +1702,7 @@ function App() {
 
     const intervalId = window.setInterval(() => {
       refreshClientTracking(clientTracking.orderNumber, true);
-    }, 10000);
+    }, 5000);
 
     return () => {
       window.clearInterval(intervalId);
@@ -2282,6 +2298,7 @@ function App() {
     setSelectedDelivery(null);
     setSelectedDeliveryTracking(null);
     setSelectedDeliveryOrder(null);
+    setSelectedDeliveryRoute(null);
     setDriverDashboard(null);
     setPodOpen(false);
     setFailureOpen(false);
@@ -2293,7 +2310,8 @@ function App() {
     }
 
     const response = await fetch(`${API_BASE}/api/tracking/driver`, {
-      headers: { Authorization: `Bearer ${user.token}` }
+      headers: { Authorization: `Bearer ${user.token}` },
+      cache: 'no-store'
     });
 
     if (!response.ok) {
@@ -2305,7 +2323,8 @@ function App() {
     const detailEntries = await Promise.all(
       (data.packages || []).map((pkg) =>
         fetch(`${API_BASE}/api/orders/status/${pkg.orderNumber}`, {
-          headers: { Authorization: `Bearer ${user.token}` }
+          headers: { Authorization: `Bearer ${user.token}` },
+          cache: 'no-store'
         })
           .then((res) => (res.ok ? res.json() : null))
           .then((order) => [pkg.orderNumber, order])
@@ -2328,9 +2347,10 @@ function App() {
     }
 
     const authHeaders = { Authorization: `Bearer ${user.token}` };
-    const [trackingResponse, orderResponse] = await Promise.all([
-      fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}`, { headers: authHeaders }),
-      fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders })
+    const [trackingResponse, orderResponse, routeResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/tracking/${selectedDelivery.orderNumber}`, { headers: authHeaders, cache: 'no-store' }),
+      fetch(`${API_BASE}/api/orders/status/${selectedDelivery.orderNumber}`, { headers: authHeaders, cache: 'no-store' }),
+      fetch(`${API_BASE}/api/ros/routes/${selectedDelivery.orderNumber}`, { headers: authHeaders, cache: 'no-store' })
     ]);
 
     if (!trackingResponse.ok) {
@@ -2339,6 +2359,7 @@ function App() {
 
     setSelectedDeliveryTracking(await trackingResponse.json());
     setSelectedDeliveryOrder(orderResponse.ok ? await orderResponse.json() : null);
+    setSelectedDeliveryRoute(routeResponse.ok ? await routeResponse.json() : selectedDelivery);
   };
 
   const updateDeliveryStatus = async ({ status, location, reason, note, loadingKey }) => {
@@ -2364,8 +2385,12 @@ function App() {
         throw new Error(bodyText || `Tracking update failed with ${response.status}`);
       }
 
-      await refreshSelectedDeliveryDetails();
+      const updatedTracking = bodyText ? JSON.parse(bodyText) : null;
+      if (updatedTracking) {
+        setSelectedDeliveryTracking(updatedTracking);
+      }
       await refreshDriverDashboard();
+      await refreshSelectedDeliveryDetails();
     } catch (error) {
       setDeliveryActionError(error.message || 'Unable to update delivery status');
       throw error;
